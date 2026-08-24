@@ -1,0 +1,146 @@
+/*
+ * Theme refresh - replaces the near-black/single-amber-accent look (a
+ * generic AI-generated-UI default) with a warm cream base and terracotta
+ * accent - Anthropic's own Claude-interaction color, used deliberately here
+ * since that's the exact signal being asked for - plus a genuinely colorful
+ * 5-hue system for the pipeline stages, matching the architecture diagrams
+ * from earlier in this project (blue/purple/teal/gold/green), rather than
+ * relying on one accent color alone to feel "colorful."
+ *
+ * Implemented as design-token overrides (CSS custom properties), not a
+ * rewrite of every component's CSS - every existing file already
+ * consistently uses var(--text-primary), var(--severity-critical), etc.,
+ * so redefining the tokens here cascades the new palette through the whole
+ * app without needing to touch dozens of individual stylesheets.
+ *
+ * Import this AFTER every other stylesheet in main.jsx so it wins the
+ * cascade.
+ */
+
+:root {
+  /* --- Base surfaces --- */
+  --bg: #F7F2EA;
+  --surface-1: #FDFAF5;
+  --surface-2: #FFFFFF;
+  --surface-raised: #FBF6EE;
+  --border: #E6DAC5;
+  --border-strong: #D8C7A8;
+
+  /* --- Text --- */
+  --text-primary: #2B2622;
+  --text-secondary: #7A6F5F;
+  --text-tertiary: #A69A82;
+
+  /* --- Brand accent (Claude's own interaction color) --- */
+  --accent: #C96A43;
+  --accent-hover: #B65B36;
+  --accent-soft: #F3DDCC;
+
+  /* --- Pipeline stage colors - matches the architecture diagrams --- */
+  --stage-ingestion: #3D6FA6;
+  --stage-ingestion-soft: #DCE9F5;
+  --stage-analysis: #7A5FB0;
+  --stage-analysis-soft: #E7E1F5;
+  --stage-scoring: #1E8A6E;
+  --stage-scoring-soft: #D8F0E9;
+  --stage-remediation: #B8860B;
+  --stage-remediation-soft: #F3E7C9;
+  --stage-learning: #5A8F3C;
+  --stage-learning-soft: #E4F0DA;
+
+  /* --- Severity ramp --- */
+  --severity-critical: #B23A2E;
+  --severity-critical-soft: #F5DAD6;
+  --severity-high: #C9622E;
+  --severity-high-soft: #F6E2D2;
+  --severity-medium: #B8860B;
+  --severity-medium-soft: #F3E7C9;
+  --severity-low: #4C8C2B;
+  --severity-low-soft: #DEEBD3;
+
+  /* --- Status --- */
+  --status-success: #4C8C2B;
+  --status-error: #B23A2E;
+  --status-pending: #7A6F5F;
+
+  /* --- Spacing (unchanged, kept here so this file is a complete token set) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+}
+
+/* Sidebar gets its own slightly deeper cream so it reads as a distinct
+   panel against the main content area, echoing the original dark theme's
+   sidebar/content contrast without going back to black. */
+.sidebar {
+  background: #F1E9D8 !important;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.sidebar__brand-mark {
+  background: var(--accent) !important;
+}
+
+.sidebar__nav-item--active {
+  background: var(--accent-soft) !important;
+  color: var(--accent-hover) !important;
+  font-weight: 600;
+}
+
+.sidebar__nav-item:hover:not(.sidebar__nav-item--active) {
+  background: var(--surface-raised) !important;
+}
+
+/* Buttons and links pick up the terracotta brand accent */
+.button {
+  border-color: var(--border-strong) !important;
+}
+
+.button:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent-hover) !important;
+}
+
+.filter-chip--active {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent-hover) !important;
+}
+
+a {
+  color: var(--accent-hover);
+}
+
+/* Cards get a touch more presence than a flat surface color */
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(43, 38, 34, 0.04);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+/* Small credit line, added to the sidebar footer - see Sidebar.jsx */
+.sidebar__credit {
+  margin-top: auto;
+  padding: var(--space-3) var(--space-4);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border);
+}
+
+.sidebar__credit a {
+  color: var(--text-tertiary);
+  text-decoration: underline;
+}

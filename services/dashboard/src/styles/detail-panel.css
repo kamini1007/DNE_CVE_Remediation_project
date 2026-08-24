@@ -1,0 +1,134 @@
+@import './tokens.css';
+
+.detail-panel {
+  padding: var(--space-5);
+  margin-top: var(--space-5);
+}
+
+.detail-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-5);
+}
+
+.detail-panel__id {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.detail-panel__loading,
+.detail-panel__not-available {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0;
+}
+
+.detail-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.detail-section__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-3) 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.detail-panel__text {
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 var(--space-4) 0;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  font-size: 13px;
+}
+
+.detail-grid dt {
+  color: var(--text-secondary);
+}
+
+.detail-grid dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+@media (max-width: 600px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-1) 0;
+  }
+  .detail-grid dd {
+    margin-bottom: var(--space-3);
+  }
+}
+
+.detail-panel__risk-headline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.detail-panel__risk-score {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.playbook-steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.playbook-steps li {
+  display: grid;
+  grid-template-columns: 80px 1fr max-content;
+  gap: var(--space-3);
+  align-items: baseline;
+  font-size: 13px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.playbook-steps li:last-child {
+  border-bottom: none;
+}
+
+.playbook-steps__priority {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.playbook-steps__owner {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .playbook-steps li {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}

@@ -1,0 +1,7 @@
+Manifest-Version: 1.0
+Java-Version: 25
+Build-Jdk-Spec: 25
+Implementation-Title: risk-engine-service
+Implementation-Version: 0.1.0
+Created-By: Maven Integration for Eclipse
+

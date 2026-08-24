@@ -1,0 +1,15 @@
+.cve-table__detail-row td {
+  padding: 0 !important;
+  border-bottom: 1px solid var(--border);
+}
+
+.cve-table__detail-cell {
+  background: var(--surface-1);
+}
+
+.cve-table__detail-cell .detail-panel {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+}

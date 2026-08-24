@@ -1,0 +1,43 @@
+@import './tokens.css';
+
+.pipeline-controls {
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+}
+
+.pipeline-controls__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.pipeline-controls__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.pipeline-controls__hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.pipeline-controls__buttons {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.pipeline-controls__result {
+  margin-top: var(--space-4);
+  font-size: 13px;
+}
+
+.pipeline-controls__result--ok {
+  color: var(--status-success);
+}
+
+.pipeline-controls__result--error {
+  color: var(--status-failed);
+}

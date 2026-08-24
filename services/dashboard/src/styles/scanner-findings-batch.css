@@ -1,0 +1,46 @@
+/* Fixes the table-overflow issue where the last column/button rendered
+   outside the visible card - narrower, fixed-width checkbox column, and a
+   table-layout that gives text columns room without needing the row-level
+   button+form that used to force horizontal scrolling. */
+.scanner-findings-table {
+  table-layout: auto;
+}
+
+.scanner-findings-table__checkbox-col {
+  width: 36px;
+  text-align: center;
+  padding-left: var(--space-2) !important;
+  padding-right: var(--space-2) !important;
+}
+
+.scanner-findings-table__row--selected {
+  background: var(--accent-soft);
+}
+
+.scanner-findings-view__batch-form {
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--accent);
+}
+
+.scanner-findings-view__batch-included,
+.scanner-findings-view__batch-skipped {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  font-size: 12px;
+}
+
+.scanner-findings-view__batch-included li {
+  color: var(--text-secondary);
+}
+
+.scanner-findings-view__batch-skipped-title {
+  margin: var(--space-3) 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--severity-high);
+}
+
+.scanner-findings-view__batch-skipped li {
+  color: var(--severity-high);
+}

@@ -1,0 +1,51 @@
+@import './tokens.css';
+
+.feedback-widget {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.feedback-widget__label {
+  color: var(--text-secondary);
+}
+
+.feedback-widget__stars {
+  display: flex;
+  gap: 2px;
+}
+
+.feedback-widget__star {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px;
+  transition: color 0.1s ease, transform 0.1s ease;
+}
+
+.feedback-widget__star:hover {
+  color: var(--severity-medium);
+  transform: scale(1.15);
+}
+
+.feedback-widget__star--filled {
+  color: var(--severity-medium);
+}
+
+.feedback-widget--done {
+  color: var(--status-success);
+  font-size: 12px;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.feedback-widget__error {
+  color: var(--status-failed);
+}

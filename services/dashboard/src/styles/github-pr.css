@@ -1,0 +1,19 @@
+.button--sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.scanner-findings-table__pr-row td {
+  background: var(--surface-1);
+  padding: var(--space-4) !important;
+}
+
+.scanner-findings-view__pr-form .scanner-findings-view__form-row label {
+  min-width: 150px;
+}
+
+.scanner-findings-view__explanation {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: var(--space-1);
+}

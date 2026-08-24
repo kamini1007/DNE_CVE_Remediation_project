@@ -1,0 +1,9 @@
+.scanner-findings-view__form--highlight {
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.scanner-findings-view__form-hint--top {
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+}
