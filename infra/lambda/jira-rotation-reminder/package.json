@@ -1,0 +1,16 @@
+{
+  "name": "jira-rotation-reminder",
+  "version": "0.1.0",
+  "description": "Lambda: alerts via SNS when the Jira API token secret is due for manual rotation. Not deployed with node_modules - the Lambda Node.js 20.x runtime already bundles @aws-sdk/*, which is why this has no production dependencies section.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.632.0",
+    "@aws-sdk/client-sns": "^3.632.0",
+    "aws-sdk-client-mock": "^4.0.1",
+    "jest": "^29.7.0"
+  }
+}

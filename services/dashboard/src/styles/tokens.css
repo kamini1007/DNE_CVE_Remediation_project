@@ -1,0 +1,66 @@
+:root {
+  /* --- Surface (ops-console dark, blue-slate not pure black) --- */
+  --bg: #0b0f14;
+  --surface: #131920;
+  --surface-raised: #1a212b;
+  --border: #232b35;
+  --border-soft: #1c232c;
+
+  /* --- Text --- */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b98a5;
+  --text-tertiary: #5c6773;
+
+  /* --- Interactive accent (deliberately distinct from the severity ramp
+     below, so it never gets misread as a risk signal) --- */
+  --accent: #4c8dff;
+  --accent-hover: #6ba0ff;
+  --accent-soft: #4c8dff1a;
+
+  /* --- Severity ramp: the signature element. Used consistently as signal
+     bars, badges, and chip colors everywhere a risk/severity level appears -
+     never as decoration. --- */
+  --severity-low: #4c9f70;
+  --severity-low-soft: #4c9f701a;
+  --severity-medium: #d9a441;
+  --severity-medium-soft: #d9a4411a;
+  --severity-high: #e0703a;
+  --severity-high-soft: #e0703a1a;
+  --severity-critical: #d14343;
+  --severity-critical-soft: #d143431a;
+  --severity-unknown: #5c6773;
+  --severity-unknown-soft: #5c67731a;
+
+  /* --- Status colors (pipeline/remediation state, distinct from severity) --- */
+  --status-success: #4c9f70;
+  --status-pending: #d9a441;
+  --status-failed: #d14343;
+
+  /* --- Type --- */
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+
+  /* --- Spacing scale --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* --- Radius: small and consistent - a console, not a consumer app --- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

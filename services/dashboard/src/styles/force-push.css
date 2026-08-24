@@ -1,0 +1,14 @@
+.scanner-findings-view__force-push-label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.scanner-findings-view__force-push-label input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}

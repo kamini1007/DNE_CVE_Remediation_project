@@ -1,0 +1,52 @@
+.pipeline-health-view__stages {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  max-width: 480px;
+}
+
+.pipeline-health-view__stage {
+  padding: var(--space-4);
+}
+
+.pipeline-health-view__stage-title {
+  margin: 0 0 var(--space-3);
+  font-size: 14px;
+}
+
+.pipeline-health-view__stage-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pipeline-health-view__stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.pipeline-health-view__stat-value {
+  font-weight: 600;
+}
+
+.pipeline-health-view__stat--good .pipeline-health-view__stat-value {
+  color: var(--severity-low);
+}
+
+.pipeline-health-view__stat--bad .pipeline-health-view__stat-value {
+  color: var(--severity-critical);
+}
+
+.pipeline-health-view__stat--pending .pipeline-health-view__stat-value {
+  color: var(--text-secondary);
+}
+
+.pipeline-health-view__arrow {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 18px;
+  line-height: 1;
+}

@@ -1,0 +1,47 @@
+version: "3.8"
+
+# Overlay for fully offline local testing - no AWS account needed at all.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.localstack.yml up --build
+#
+# Adds:
+#   - localstack: emulates Secrets Manager + IAM (validated by infra/terraform-localstack)
+#   - mock-bedrock: stands in for real AWS Bedrock so ai-analysis-service runs fully offline
+# See docs/localstack-guide.md for the full step-by-step.
+
+services:
+  localstack:
+    image: localstack/localstack:3.7
+    container_name: cve-localstack
+    ports:
+      - "4566:4566"   # edge port - every emulated AWS API is reachable here
+    environment:
+      SERVICES: "secretsmanager,iam,sts"
+      DEBUG: "0"
+    volumes:
+      - localstack_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mock-bedrock:
+    build:
+      context: ./infra/localstack/mock-bedrock
+    container_name: cve-mock-bedrock
+    restart: unless-stopped
+    ports:
+      - "4010:4010"
+
+  ai-analysis-service:
+    environment:
+      # Override: talk to mock-bedrock instead of real AWS Bedrock.
+      BEDROCK_ENDPOINT_URL: "http://mock-bedrock:4010"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+    depends_on:
+      mock-bedrock:
+        condition: service_started
+
+volumes:
+  localstack_data:

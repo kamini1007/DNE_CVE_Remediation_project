@@ -1,0 +1,59 @@
+# ServiceMonitors are CRDs from the Prometheus Operator (kube-prometheus-stack).
+# They must be installed before these apply - see docs/phase7-deployment-guide.md.
+#
+# The Java and Node services expose metrics on different paths, so they need
+# separate ServiceMonitors:
+#   - Spring Boot / Micrometer -> /actuator/prometheus
+#   - Node / prom-client       -> /metrics
+#
+# NOTE: each Service currently exposes only port 80 -> the app port, and the
+# metrics endpoint is served on that same app port, so scraping targets the
+# service's existing named port rather than a separate metrics port.
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: java-services
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - cve-platform
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - ingestion-service
+          - risk-engine-service
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 30s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: node-services
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - cve-platform
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - ai-analysis-service
+          - remediation-service
+          - learning-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

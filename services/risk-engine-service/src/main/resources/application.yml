@@ -1,0 +1,50 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: risk-engine-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cve_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10
+
+  jpa:
+    hibernate:
+      ddl-auto: validate   # schema is owned by ingestion-service's Flyway migrations
+    open-in-view: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: risk-engine-service
+
+logging:
+  level:
+    root: INFO
+    com.security.riskengine: DEBUG
+
+# --- Risk scoring configuration ---
+risk-engine:
+  model-version: v1
+  scheduling:
+    enabled: true
+    cron: "0 30 */1 * * *"   # hourly at :30
+    batch-size: 1000          # bumped from 200 for faster local catch-up against mock-bedrock
+  weights:                    # must sum to 1.0 - validated at startup
+    cvss: 0.35
+    exploitability: 0.25
+    asset-criticality: 0.20
+    network-exposure: 0.10
+    business-impact: 0.10
+  thresholds:                 # 0-100 score cutoffs for LOW/MEDIUM/HIGH/CRITICAL
+    critical: 80
+    high: 60
+    medium: 35

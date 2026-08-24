@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.security</groupId>
+    <artifactId>cve-ingestion-service</artifactId>
+    <version>0.1.0</version>
+    <name>cve-ingestion-service</name>
+    <description>Phase 1 - CVE ingestion service (NVD, MITRE/CVE Program, Vendor advisories)</description>
+
+    <properties>
+        <java.version>25</java.version>
+        <rome.version>2.1.0</rome.version>
+        <!-- Explicit version needed for the annotationProcessorPaths entry
+             below - see the maven-compiler-plugin configuration comment for
+             why this whole thing is here. -->
+        <lombok.version>1.18.42</lombok.version>
+    </properties>
+
+    <dependencies>
+        <!-- Renamed from spring-boot-starter-web in Spring Boot 4's
+             modularization (distinguishes Spring MVC from WebFlux). The old
+             name still resolves as a deprecated "classic" compatibility
+             starter, but the new name is what Spring's own migration
+             guidance recommends. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+        <!-- Spring Boot 4 split RestTemplateBuilder's auto-configuration out
+             of the web starter into its own starter - without this,
+             RestTemplateBuilder (used in HttpClientConfig.java) is not on
+             the classpath at all, regardless of import path. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-restclient</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Exposes /actuator/prometheus for the Prometheus scraper configured
+             in k8s/monitoring/servicemonitors.yaml -->
+        <!-- Metrics auto-configuration split out of actuator in Boot 4's
+             modularization (this is what lets Micrometer be used
+             independently of Actuator now). Added explicitly rather than
+             assuming spring-boot-starter-actuator alone still wires up the
+             Prometheus registry, since that assumption isn't confirmed. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-micrometer-metrics</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- spring-retry and spring-aspects were removed here: neither was
+             actually used anywhere in this codebase (no @Retryable,
+             RetryTemplate, or @Aspect usage), and Spring Boot 4 dropped
+             dependency management for spring-retry specifically - its
+             functionality (@Retryable, RetryTemplate, @ConcurrencyLimit) is
+             now native to Spring Framework 7 core, requiring no extra
+             dependency at all. If retry logic is needed later, reach for
+             org.springframework.core.retry directly rather than re-adding
+             spring-retry with a hand-pinned version. -->
+
+        <!-- DB -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- Spring Boot 4 no longer auto-configures Flyway just because
+             flyway-core is on the classpath - without this starter,
+             migrations silently do not run on startup (no error at all,
+             just an empty database). flyway-database-postgresql is still
+             needed alongside it for Postgres-specific support. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- RSS/Atom parsing for vendor advisory feeds -->
+        <dependency>
+            <groupId>com.rometools</groupId>
+            <artifactId>rome</artifactId>
+            <version>${rome.version}</version>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Confirmed fix for a known, currently-tracked Spring Boot 4 +
+                 Lombok issue: Maven's implicit classpath-based annotation
+                 processor discovery does not reliably pick up Lombok under
+                 Boot 4's build setup, so every Lombok-generated getter/
+                 setter/builder/@Slf4j "log" field silently isn't generated -
+                 "cannot find symbol" for all of them, with no error pointing
+                 at Lombok itself. Explicitly declaring the processor path
+                 fixes it. Bumping Lombok's version alone does not - this is
+                 not a Lombok/JDK-25 compatibility problem, it's specifically
+                 about annotation processor discovery under Boot 4.
+                 See: https://github.com/projectlombok/lombok/issues/3968
+                 and: https://github.com/spring-projects/spring-boot/issues/47548 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

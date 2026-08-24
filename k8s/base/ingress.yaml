@@ -1,0 +1,106 @@
+# Single-origin ingress. Everything is served from one hostname, with the ALB
+# routing /api/* to the right backend - which is why the dashboard can use
+# relative URLs and CORS never comes into play. Requires the AWS Load Balancer
+# Controller installed in the cluster (see docs/phase7-deployment-guide.md).
+#
+# Path matching is order-sensitive here: more specific /api/* rules must come
+# before the catch-all "/" rule that sends everything else to the dashboard.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cve-platform
+  namespace: cve-platform
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    # ACM certificate ARN - from the Terraform output `acm_certificate_arn`.
+    alb.ingress.kubernetes.io/certificate-arn: "<ACM_CERTIFICATE_ARN>"
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+
+    # --- Authentication ---
+    # Closes the "anyone who can reach the dashboard can trigger pipeline runs"
+    # gap from Phase 6 by requiring OIDC login at the load balancer, before any
+    # request reaches a pod. Doing it here rather than in each service means
+    # there's exactly one place to get it right.
+    #
+    # This is authentication only, not authorization: every authenticated user
+    # currently gets full access. Per-user roles (read-only analyst vs. someone
+    # allowed to trigger runs) would need real authorization inside the
+    # services, and is deliberately out of scope here - see the guide.
+    alb.ingress.kubernetes.io/auth-type: oidc
+    alb.ingress.kubernetes.io/auth-idp-oidc: |
+      {"issuer":"<OIDC_ISSUER_URL>","authorizationEndpoint":"<OIDC_AUTH_ENDPOINT>","tokenEndpoint":"<OIDC_TOKEN_ENDPOINT>","userInfoEndpoint":"<OIDC_USERINFO_ENDPOINT>","secretName":"oidc-client-secret"}
+    alb.ingress.kubernetes.io/auth-scope: openid
+    alb.ingress.kubernetes.io/auth-session-timeout: '3600'
+spec:
+  rules:
+    - host: "<PLATFORM_HOSTNAME>"
+      http:
+        paths:
+          - path: /api/ingestion
+            pathType: Prefix
+            backend:
+              service:
+                name: ingestion-service
+                port:
+                  number: 80
+          - path: /api/cves
+            pathType: Prefix
+            backend:
+              service:
+                name: ingestion-service
+                port:
+                  number: 80
+          - path: /api/analysis
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-analysis-service
+                port:
+                  number: 80
+          - path: /api/risk
+            pathType: Prefix
+            backend:
+              service:
+                name: risk-engine-service
+                port:
+                  number: 80
+          - path: /api/asset-profiles
+            pathType: Prefix
+            backend:
+              service:
+                name: risk-engine-service
+                port:
+                  number: 80
+          - path: /api/remediation
+            pathType: Prefix
+            backend:
+              service:
+                name: remediation-service
+                port:
+                  number: 80
+          - path: /api/feedback
+            pathType: Prefix
+            backend:
+              service:
+                name: learning-service
+                port:
+                  number: 80
+          - path: /api/learning
+            pathType: Prefix
+            backend:
+              service:
+                name: learning-service
+                port:
+                  number: 80
+          # Catch-all: the dashboard SPA. Must stay last.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
+                port:
+                  number: 80

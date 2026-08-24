@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remediation-config
+  namespace: cve-platform
+data:
+  REMEDIATION_CRON: "0 0 */2 * * *"
+  REMEDIATION_BATCH_SIZE: "50"
+  REMEDIATION_MIN_RISK_LEVEL: "HIGH"
+  JIRA_ISSUE_TYPE: "Task"

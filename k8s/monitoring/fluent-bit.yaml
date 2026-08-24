@@ -1,0 +1,162 @@
+# Fluent Bit as a DaemonSet: one pod per node, tailing container logs and
+# shipping them to CloudWatch Logs. Chosen over a self-hosted ELK stack
+# because it's one DaemonSet and an IAM role rather than a stateful cluster
+# to operate, and the log volume here (a handful of services) doesn't justify
+# running Elasticsearch.
+#
+# The ServiceAccount needs an IRSA role with CloudWatch Logs write permissions
+# - created by infra/terraform/monitoring.tf, output `fluent_bit_role_arn`.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+  labels:
+    kubernetes.io/metadata.name: logging
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+  annotations:
+    eks.amazonaws.com/role-arn: "<FLUENT_BIT_IRSA_ROLE_ARN>"
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "pods/logs"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: logging
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush                     5
+        Log_Level                 info
+        Daemon                    off
+        Parsers_File              parsers.conf
+        HTTP_Server               On
+        HTTP_Listen               0.0.0.0
+        HTTP_Port                 2020
+        storage.path              /var/log/flb-storage/
+        storage.sync              normal
+        storage.backlog.mem_limit 5M
+
+    [INPUT]
+        Name                tail
+        Tag                 cve-platform.*
+        Path                /var/log/containers/*_cve-platform_*.log
+        multiline.parser    docker, cri
+        DB                  /var/log/flb_kube.db
+        Mem_Buf_Limit       5MB
+        Skip_Long_Lines     On
+        Refresh_Interval    10
+
+    # Enriches each record with pod/namespace/labels, so CloudWatch Insights
+    # queries can filter by service without parsing the log line itself.
+    [FILTER]
+        Name                kubernetes
+        Match               cve-platform.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               cve-platform.*
+        region              ${AWS_REGION}
+        log_group_name      /aws/eks/cve-remediation/application
+        log_stream_prefix   ${HOST_NAME}-
+        auto_create_group   false
+
+  parsers.conf: |
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels:
+    app: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      tolerations:
+        # Must run on every node, including any tainted ones, or logs from
+        # those nodes are silently lost.
+        - operator: Exists
+      containers:
+        - name: fluent-bit
+          image: public.ecr.aws/aws-observability/aws-for-fluent-bit:2.32.2
+          env:
+            - name: AWS_REGION
+              value: us-east-1
+            - name: HOST_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+        - name: fluent-bit-config
+          configMap:
+            name: fluent-bit-config

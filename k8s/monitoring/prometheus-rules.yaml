@@ -1,0 +1,108 @@
+# Alerts are deliberately split into two groups:
+#
+#   platform-infrastructure - the usual "is it running" checks
+#   platform-pipeline       - "is it actually doing its job", built on the
+#                             domain metrics instrumented in each service
+#
+# The second group matters more here: every pod can be healthy while the
+# pipeline silently stops producing analyses (expired Bedrock permissions,
+# Jira token rotation, NVD rate limiting). Pod-level alerts alone would
+# never catch that.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cve-platform-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: platform-infrastructure
+      rules:
+        - alert: ServiceDown
+          expr: up{namespace="cve-platform"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.job }} has been unreachable for 5 minutes"
+            description: "Prometheus cannot scrape {{ $labels.job }} in cve-platform. Check pod status and recent deploys."
+
+        - alert: PodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace="cve-platform"}[15m]) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.pod }} is crash looping"
+            description: "Container {{ $labels.container }} has restarted repeatedly over the last 15 minutes."
+
+        - alert: HighMemoryUsage
+          expr: |
+            container_memory_working_set_bytes{namespace="cve-platform"}
+              / on(container, pod) kube_pod_container_resource_limits{namespace="cve-platform", resource="memory"}
+              > 0.9
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} is near its memory limit"
+            description: "Working set is above 90% of the configured limit; an OOMKill is likely."
+
+    - name: platform-pipeline
+      rules:
+        - alert: BedrockInvocationFailureRate
+          expr: |
+            sum(rate(cve_analysis_bedrock_invocations_total{outcome="error"}[15m]))
+              / clamp_min(sum(rate(cve_analysis_bedrock_invocations_total[15m])), 0.001)
+              > 0.25
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Over 25% of Bedrock calls are failing"
+            description: "Common causes: IRSA role lost bedrock:InvokeModel, the configured model ID was deprecated, or sustained throttling. Check ai-analysis-service logs."
+
+        - alert: AnalysisPipelineStalled
+          expr: |
+            sum(increase(cve_analysis_total[6h])) == 0
+            and sum(cve_analysis_batch_last_size) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Analysis has produced no results in 6 hours despite pending work"
+            description: "The batch is finding candidate CVEs but completing none. Check for a persistent Bedrock or database error."
+
+        - alert: JiraTicketCreationFailing
+          expr: |
+            sum(rate(cve_remediation_jira_requests_total{outcome="error"}[30m])) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Jira ticket creation is failing"
+            description: "Usually an expired API token or a changed project key. Remediation playbooks are still being generated and stored - only ticket creation is affected."
+
+        - alert: HighAnalysisFailureRate
+          expr: |
+            sum(rate(cve_analysis_total{status="FAILED"}[1h]))
+              / clamp_min(sum(rate(cve_analysis_total[1h])), 0.001)
+              > 0.2
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Over 20% of CVE analyses are failing"
+            description: "Failed analyses are retried automatically on the next batch, so a brief spike is tolerable - a sustained rate is not."
+
+        - alert: BedrockLatencyHigh
+          expr: |
+            histogram_quantile(0.95, sum(rate(cve_analysis_bedrock_duration_seconds_bucket[30m])) by (le, model_id)) > 25
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p95 Bedrock latency above 25s for {{ $labels.model_id }}"
+            description: "Batches will fall behind schedule. Consider lowering ANALYSIS_CONCURRENCY or checking for throttling."

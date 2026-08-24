@@ -1,0 +1,76 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: cve-ingestion-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cve_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10
+
+  jpa:
+    hibernate:
+      ddl-auto: validate   # schema is owned by Flyway migrations, not Hibernate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      # Lets Grafana/Alertmanager slice metrics by service without relying on
+      # k8s labels alone (which don't survive into every metric).
+      application: ingestion-service
+
+logging:
+  level:
+    root: INFO
+    com.security.cveingestion: INFO
+
+# --- CVE ingestion source configuration ---
+# Each source has its own enabled flag + cron expression, so they can be tuned
+# or disabled independently without a code change.
+ingestion:
+  nvd:
+    enabled: true
+    cron: "0 */30 * * * *"        # every 30 minutes
+    base-url: https://services.nvd.nist.gov/rest/json/cves/2.0
+    api-key: ${NVD_API_KEY:}      # optional - raises rate limit from 5/30s to 50/30s
+    results-per-page: 200
+    request-delay-ms: 6000
+    initial-backfill-days: 7
+
+  mitre:
+    enabled: true
+    cron: "0 15 */1 * * *"        # hourly at :15
+    delta-log-url: https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/deltaLog.json
+    raw-content-base-url: https://raw.githubusercontent.com/CVEProject/cvelistV5/main/
+    max-records-per-run: 500
+
+  vendor:
+    enabled: true
+    cron: "0 45 */2 * * *"        # every 2 hours at :45
+    feeds:
+      - key: redhat
+        display-name: Red Hat Security Advisories
+        url: https://access.redhat.com/security/data/metrics/rhsa.rss
+      - key: debian
+        display-name: Debian Security Advisories
+        url: https://www.debian.org/security/dsa-long

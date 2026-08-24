@@ -1,0 +1,11 @@
+.scanner-findings-table__severity-unknown {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+
+.scanner-findings-view__optional {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  text-transform: none;
+}

@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.security</groupId>
+    <artifactId>risk-engine-service</artifactId>
+    <version>0.1.0</version>
+    <name>risk-engine-service</name>
+    <description>Phase 4 - Risk Prioritization Engine: weighted CVSS/exploitability/asset-criticality/exposure/business-impact scoring</description>
+
+    <properties>
+        <java.version>25</java.version>
+        <!-- Explicit version needed for the annotationProcessorPaths entry
+             below - see the maven-compiler-plugin configuration comment for
+             why this whole thing is here. -->
+        <lombok.version>1.18.42</lombok.version>
+    </properties>
+
+    <dependencies>
+        <!-- Renamed from spring-boot-starter-web in Spring Boot 4's
+             modularization (distinguishes Spring MVC from WebFlux). The old
+             name still resolves as a deprecated "classic" compatibility
+             starter, but the new name is what Spring's own migration
+             guidance recommends. This service doesn't use RestTemplate, so
+             (unlike ingestion-service) no spring-boot-starter-restclient
+             addition is needed here. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Exposes /actuator/prometheus for the Prometheus scraper configured
+             in k8s/monitoring/servicemonitors.yaml -->
+        <!-- Metrics auto-configuration split out of actuator in Boot 4's
+             modularization (this is what lets Micrometer be used
+             independently of Actuator now). Added explicitly rather than
+             assuming spring-boot-starter-actuator alone still wires up the
+             Prometheus registry, since that assumption isn't confirmed. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-micrometer-metrics</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- No Flyway dependency here on purpose - the schema (including
+             asset_profile and risk_score) is owned by ingestion-service's
+             Flyway migrations. This service only reads/writes existing tables. -->
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Confirmed fix for a known, currently-tracked Spring Boot 4 +
+                 Lombok issue: Maven's implicit classpath-based annotation
+                 processor discovery does not reliably pick up Lombok under
+                 Boot 4's build setup, so every Lombok-generated getter/
+                 setter/builder/@Slf4j "log" field silently isn't generated -
+                 "cannot find symbol" for all of them, with no error pointing
+                 at Lombok itself. Explicitly declaring the processor path
+                 fixes it. Bumping Lombok's version alone does not - this is
+                 not a Lombok/JDK-25 compatibility problem, it's specifically
+                 about annotation processor discovery under Boot 4.
+                 See: https://github.com/projectlombok/lombok/issues/3968
+                 and: https://github.com/spring-projects/spring-boot/issues/47548 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

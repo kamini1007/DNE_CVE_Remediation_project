@@ -1,0 +1,5 @@
+.scanner-findings-view__section-title {
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-1);
+  font-size: 18px;
+}

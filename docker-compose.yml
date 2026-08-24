@@ -1,0 +1,173 @@
+version: "3.8"
+
+# Local/dev orchestration for the whole backend against one shared Postgres.
+# Each service also has its own standalone docker-compose.yml - use this one
+# to see ingestion + AI analysis + risk scoring working together end-to-end.
+# For a fully offline setup with no AWS account at all, layer on
+# docker-compose.localstack.yml (see docs/localstack-guide.md).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cve-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cve_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - cve_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cve_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ingestion-service:
+    build:
+      context: ./services/ingestion-service
+    container_name: cve-ingestion-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cve_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      NVD_API_KEY: "${NVD_API_KEY:-}"
+    ports:
+      - "8080:8080"
+
+  ai-analysis-service:
+    build:
+      context: ./services/ai-analysis-service
+    container_name: cve-ai-analysis-service
+    restart: unless-stopped
+    depends_on:
+      # ingestion-service's Flyway migrations are the schema authority - the
+      # cve_analysis table (owned there, not by this service) must exist
+      # before this service can write to it. `depends_on: service_started`
+      # only waits for the container to start, not for Flyway to finish, so
+      # give ingestion-service a head start or restart this service if it
+      # logs a "relation does not exist" error on first boot.
+      ingestion-service:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cve_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      # Local/dev credentials for calling real Bedrock from a laptop - NOT how
+      # this authenticates in EKS (that uses the IRSA role, see k8s/ manifests).
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      BEDROCK_PRIMARY_MODEL_ID: "${BEDROCK_PRIMARY_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}"
+      BEDROCK_FALLBACK_MODEL_IDS: "${BEDROCK_FALLBACK_MODEL_IDS:-anthropic.claude-3-haiku-20240307-v1:0}"
+      ANALYSIS_CRON: "${ANALYSIS_CRON:-*/15 * * * *}"
+      ANALYSIS_BATCH_SIZE: "${ANALYSIS_BATCH_SIZE:-25}"
+      ANALYSIS_CONCURRENCY: "${ANALYSIS_CONCURRENCY:-3}"
+    ports:
+      - "3000:3000"
+
+  risk-engine-service:
+    build:
+      context: ./services/risk-engine-service
+    container_name: cve-risk-engine-service
+    restart: unless-stopped
+    depends_on:
+      # Needs cve_analysis rows to exist to have anything to score - it'll
+      # just find zero candidates until ai-analysis-service has processed some CVEs.
+      ingestion-service:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cve_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "8083:8083"
+
+  remediation-service:
+    build:
+      context: ./services/remediation-service
+    container_name: cve-remediation-service
+    restart: unless-stopped
+    depends_on:
+      # Needs risk_score rows to exist - it'll just find zero candidates
+      # until risk-engine-service has scored some CVEs.
+      risk-engine-service:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cve_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      # Jira is optional - leave these unset (the default) to run in
+      # dry-run mode: playbooks are generated and stored, no real ticket created.
+      JIRA_BASE_URL: "${JIRA_BASE_URL:-}"
+      JIRA_EMAIL: "${JIRA_EMAIL:-}"
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN:-}"
+      JIRA_PROJECT_KEY: "${JIRA_PROJECT_KEY:-}"
+      REMEDIATION_MIN_RISK_LEVEL: "${REMEDIATION_MIN_RISK_LEVEL:-HIGH}"
+    ports:
+      - "3001:3001"
+
+  learning-service:
+    build:
+      context: ./services/learning-service
+    container_name: cve-learning-service
+    restart: unless-stopped
+    depends_on:
+      # Needs the feedback/calibration_report tables and remediation_action's
+      # outcome columns, all from ingestion-service's Flyway migrations.
+      ingestion-service:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cve_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "3002:3002"
+
+  dashboard:
+    build:
+      context: ./services/dashboard
+      args:
+        # Browser-facing URLs, so these are localhost (the host machine),
+        # NOT docker-compose service names - the browser resolves them, not
+        # the container. Baked in at build time by Vite.
+        VITE_INGESTION_API_URL: "http://localhost:8080"
+        VITE_AI_ANALYSIS_API_URL: "http://localhost:3000"
+        VITE_RISK_ENGINE_API_URL: "http://localhost:8083"
+        VITE_REMEDIATION_API_URL: "http://localhost:3001"
+        VITE_LEARNING_API_URL: "http://localhost:3002"
+    container_name: cve-dashboard
+    restart: unless-stopped
+    depends_on:
+      ingestion-service:
+        condition: service_started
+    ports:
+      # Container now listens on 8080 (unprivileged nginx), not 80.
+      - "5173:8080"
+
+volumes:
+  cve_pg_data:

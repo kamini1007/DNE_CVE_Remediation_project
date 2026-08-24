@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars and fill in, OR pass sensitive values via
+# TF_VAR_db_password / CI secret variables instead of committing them.
+
+aws_region   = "us-east-1"
+project_name = "cve-remediation"
+environment  = "dev"
+
+# db_password = "set-via-TF_VAR_db_password-or-CI-secret"

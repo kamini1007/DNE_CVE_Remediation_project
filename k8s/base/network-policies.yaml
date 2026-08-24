@@ -1,0 +1,134 @@
+# Default-deny baseline plus explicit allows. Without this, any compromised
+# pod in the namespace can reach any other pod and any external endpoint.
+#
+# NOTE: NetworkPolicy requires a CNI that enforces it. EKS's default VPC CNI
+# does NOT - you need Calico (or Cilium) installed for these to do anything.
+# See docs/phase7-deployment-guide.md. Applying these without a policy-capable
+# CNI silently does nothing, which is worse than not applying them, because it
+# looks like protection that isn't there.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: cve-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# DNS must be allowed for every pod, or nothing can resolve anything -
+# including the database hostname.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: cve-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Allow the ALB (which targets pod IPs directly with target-type: ip) to reach
+# each service's HTTP port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-alb
+  namespace: cve-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # The ALB lives in the VPC, not in a namespace, so this is a CIDR
+        # rule. Narrow this to your actual VPC/subnet CIDR - it's the VPC
+        # CIDR from Terraform (var.vpc_cidr), not 0.0.0.0/0.
+        - ipBlock:
+            cidr: 10.30.0.0/16
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8083
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 3001
+        - protocol: TCP
+          port: 3002
+        - protocol: TCP
+          port: 80
+
+---
+# Allow Prometheus (running in the monitoring namespace) to scrape metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: cve-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8083
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 3001
+        - protocol: TCP
+          port: 3002
+
+---
+# Egress to PostgreSQL (RDS, outside the cluster in the VPC) and to HTTPS
+# endpoints the services legitimately need: NVD/MITRE/vendor feeds, AWS
+# Bedrock, AWS Secrets Manager, and Jira.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-db-and-https
+  namespace: cve-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.30.0.0/16 # RDS inside the VPC
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Don't let pods reach the VPC generally over HTTPS, or the
+              # instance metadata service (a common credential-theft path).
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 443
