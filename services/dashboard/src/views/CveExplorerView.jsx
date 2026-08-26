@@ -1,49 +1,26 @@
-import { useState } from 'react';
-import { useApi } from '../hooks/useApi';
+import { useEffect, useState } from 'react';
 import { riskApi } from '../api/riskApi';
-import { remediationApi } from '../api/remediationApi';
 import { ingestionApi } from '../api/ingestionApi';
 import { analysisApi } from '../api/analysisApi';
+import { remediationApi } from '../api/remediationApi';
 import { pipelineHealthApi } from '../api/pipelineHealthApi';
-import { CveTable } from '../components/CveTable';
 import { StatCard } from '../components/StatCard';
+import { CveTable } from '../components/CveTable';
 
 const LEVEL_FILTERS = ['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const PAGE_SIZE = 25;
 
-// Human-readable descriptions, shared between the individual trigger
-// buttons' status messages and the "Run full pipeline" step list below -
-// one place to keep this wording, not duplicated.
 const STAGE_INFO = {
-  ingestion: {
-    label: 'Ingestion',
-    description: 'Pulling new or updated CVEs from NVD, MITRE, and configured vendor advisory feeds into the shared database.',
-  },
-  analysis: {
-    label: 'AI analysis',
-    description: 'Sending each newly-ingested CVE to the AI model to generate a plain-language exploitability and impact assessment.',
-  },
-  riskScoring: {
-    label: 'Risk scoring',
-    description: 'Calculating a weighted 0-100 risk score per CVE from CVSS, exploitability, and your configured asset-criticality/exposure/business-impact profile.',
-  },
-  remediation: {
-    label: 'Remediation',
-    description: 'Generating a prioritized remediation playbook (and opening a Jira ticket if configured) for every CVE scored HIGH or CRITICAL.',
-  },
+  ingestion: { label: 'Ingestion', description: 'Pulling new or updated CVEs from NVD, MITRE, and configured vendor advisory feeds into the shared database.' },
+  analysis: { label: 'AI analysis', description: 'Sending each newly-ingested CVE to the AI model to generate a plain-language exploitability and impact assessment.' },
+  riskScoring: { label: 'Risk scoring', description: 'Calculating a weighted 0-100 risk score per CVE from CVSS, exploitability, and your configured asset-criticality/exposure/business-impact profile.' },
+  remediation: { label: 'Remediation', description: 'Generating a prioritized remediation playbook (and opening a Jira ticket if configured) for every CVE scored HIGH or CRITICAL.' },
 };
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Polls Pipeline Health every 2s and considers a stage "done" once the
- * given number stops changing across 2 consecutive polls - there's no
- * job-completion signal from the backend triggers (they fire-and-forget),
- * so this is an approximation, not a guarantee, capped at maxAttempts so
- * it can't hang forever if something never settles.
- */
 async function pollUntilStable(selector, { maxAttempts = 20, intervalMs = 2000 } = {}) {
   let previous = null;
   let stableCount = 0;
@@ -53,7 +30,7 @@ async function pollUntilStable(selector, { maxAttempts = 20, intervalMs = 2000 }
     try {
       health = await pipelineHealthApi.getHealth();
     } catch {
-      continue; // transient error mid-poll - just keep trying
+      continue;
     }
     const current = selector(health);
     if (previous !== null && current === previous) {
@@ -64,39 +41,58 @@ async function pollUntilStable(selector, { maxAttempts = 20, intervalMs = 2000 }
     }
     previous = current;
   }
-  return previous; // timed out - proceed anyway rather than block indefinitely
+  return previous;
 }
 
-// Formerly the Overview page's four stat cards + Pipeline controls, merged
-// in here since CVE Explorer's own table - already sorted highest-risk-
-// first - made Overview's separate "Highest Risk" preview table redundant.
-export function CveExplorerView({ onSelectCve, selectedCveId }) {
+function useApiOnce(fetchFn, deps) {
+  const [state, setState] = useState({ data: null, loading: true, error: null });
+  useEffect(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    fetchFn()
+      .then((data) => {
+        if (!cancelled) setState({ data, loading: false, error: null });
+      })
+      .catch((error) => {
+        if (!cancelled) setState({ data: null, loading: false, error });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return state;
+}
+
+/**
+ * Risk-level stats, pipeline controls, and the CVE listing, together - no
+ * scan/PR/Jira actions here (those are Scanner Findings), and Pipeline
+ * Health keeps its own read-only status funnel separate from these
+ * action buttons.
+ */
+export function CveExplorerView() {
   const [level, setLevel] = useState('ALL');
   const [page, setPage] = useState(0);
+  const [selectedCveId, setSelectedCveId] = useState(null);
   const [triggerStatus, setTriggerStatus] = useState(null);
+  const [pipelineRun, setPipelineRun] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [pipelineRun, setPipelineRun] = useState(null); // null | { steps: [...], error }
 
-  const query = useApi(
+  const criticalQuery = useApiOnce(() => riskApi.listPrioritized({ level: 'CRITICAL', size: 1 }), [refreshKey]);
+  const highQuery = useApiOnce(() => riskApi.listPrioritized({ level: 'HIGH', size: 1 }), [refreshKey]);
+  const mediumQuery = useApiOnce(() => riskApi.listPrioritized({ level: 'MEDIUM', size: 1 }), [refreshKey]);
+
+  const cveQuery = useApiOnce(
     () => riskApi.listPrioritized({ ...(level === 'ALL' ? {} : { level }), page, size: PAGE_SIZE }),
     [level, page, refreshKey]
   );
-
-  // RECONSTRUCTED - not verified against your actual OverviewView.jsx (see
-  // this project's earlier merge-pages.zip README for the full caveat).
-  const criticalQuery = useApi(() => riskApi.listPrioritized({ level: 'CRITICAL', size: 1 }), [refreshKey]);
-  const highQuery = useApi(() => riskApi.listPrioritized({ level: 'HIGH', size: 1 }), [refreshKey]);
-  const ticketsQuery = useApi(() => remediationApi.listRemediations({ status: 'TICKET_CREATED', size: 1 }), [refreshKey]);
-  const playbooksQuery = useApi(() => remediationApi.listRemediations({ size: 1 }), [refreshKey]);
-
-  const rows = (query.data?.content || []).map((r) => ({
+  const cveRows = (cveQuery.data?.content || []).map((r) => ({
     cveId: r.cveId,
     riskLevel: r.riskLevel,
     riskScore: r.riskScore,
     computedAt: r.computedAt,
   }));
-
-  const totalPages = query.data?.totalPages ?? 0;
+  const totalPages = cveQuery.data?.totalPages ?? 0;
 
   function changeLevel(next) {
     setLevel(next);
@@ -120,10 +116,7 @@ export function CveExplorerView({ onSelectCve, selectedCveId }) {
 
   async function runFullPipeline() {
     const steps = Object.keys(STAGE_INFO).map((key) => ({
-      key,
-      label: STAGE_INFO[key].label,
-      description: STAGE_INFO[key].description,
-      status: 'pending',
+      key, label: STAGE_INFO[key].label, description: STAGE_INFO[key].description, status: 'pending',
     }));
     setPipelineRun({ steps, error: null, running: true });
 
@@ -160,19 +153,14 @@ export function CveExplorerView({ onSelectCve, selectedCveId }) {
   }
 
   return (
-    <>
-      <header className="page-header">
-        <h1 className="page-title">CVE Explorer</h1>
-        <p className="page-subtitle">
-          Prioritized vulnerability posture across ingestion, analysis, scoring, and remediation.
-        </p>
-      </header>
+    <div className="scanner-findings-view">
+      <h1>CVE Explorer</h1>
+      <p className="view-subtitle">Every risk-scored CVE, highest risk first. Select one to see its full pipeline record.</p>
 
       <div className="stats-grid">
         <StatCard label="Critical" value={criticalQuery.data?.totalElements ?? '—'} sublabel="Risk-scored CVEs" tone="critical" />
         <StatCard label="High" value={highQuery.data?.totalElements ?? '—'} sublabel="Risk-scored CVEs" tone="high" />
-        <StatCard label="Tickets created" value={ticketsQuery.data?.totalElements ?? '—'} sublabel="In Jira" />
-        <StatCard label="Playbooks ready" value={playbooksQuery.data?.totalElements ?? '—'} sublabel="Awaiting Jira config" />
+        <StatCard label="Medium" value={mediumQuery.data?.totalElements ?? '—'} sublabel="Risk-scored CVEs" />
       </div>
 
       <div className="card pipeline-controls">
@@ -193,11 +181,7 @@ export function CveExplorerView({ onSelectCve, selectedCveId }) {
           <button className="button" onClick={() => handleTrigger('remediation', () => remediationApi.triggerBatch())}>
             Trigger remediation
           </button>
-          <button
-            className="button button--primary"
-            onClick={runFullPipeline}
-            disabled={pipelineRun?.running}
-          >
+          <button className="button button--primary" onClick={runFullPipeline} disabled={pipelineRun?.running}>
             {pipelineRun?.running ? 'Running full pipeline…' : 'Run full pipeline'}
           </button>
         </div>
@@ -218,13 +202,11 @@ export function CveExplorerView({ onSelectCve, selectedCveId }) {
         )}
         {pipelineRun?.error && <div className="error-banner">{pipelineRun.error}</div>}
         {pipelineRun && !pipelineRun.running && !pipelineRun.error && (
-          <p className="pipeline-run-steps__done-message">
-            Full pipeline run complete - numbers above are refreshed automatically.
-          </p>
+          <p className="pipeline-run-steps__done-message">Full pipeline run complete - numbers above are refreshed automatically.</p>
         )}
       </div>
 
-      {query.error && <div className="error-banner">Couldn't load CVEs: {query.error.message}</div>}
+      {cveQuery.error && <div className="error-banner">Couldn't load CVEs: {cveQuery.error.message}</div>}
 
       <div className="filter-bar">
         {LEVEL_FILTERS.map((option) => (
@@ -239,29 +221,19 @@ export function CveExplorerView({ onSelectCve, selectedCveId }) {
         ))}
       </div>
 
-      {query.loading ? (
+      {cveQuery.loading ? (
         <div className="card empty-state">Loading…</div>
       ) : (
-        <CveTable rows={rows} selectedCveId={selectedCveId} onSelect={onSelectCve} />
+        <CveTable rows={cveRows} selectedCveId={selectedCveId} onSelect={setSelectedCveId} />
       )}
 
       {totalPages > 1 && (
         <div className="pagination">
-          <button className="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
-            Previous
-          </button>
-          <span className="pagination__status mono">
-            Page {page + 1} of {totalPages}
-          </span>
-          <button
-            className="button"
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={page >= totalPages - 1}
-          >
-            Next
-          </button>
+          <button className="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>Previous</button>
+          <span className="pagination__status mono">Page {page + 1} of {totalPages}</span>
+          <button className="button" onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>Next</button>
         </div>
       )}
-    </>
+    </div>
   );
 }

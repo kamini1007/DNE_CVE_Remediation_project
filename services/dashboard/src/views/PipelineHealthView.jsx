@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { pipelineHealthApi } from '../api/pipelineHealthApi';
 import { SeverityBadge } from '../components/SeverityBadge';
 
+/**
+ * Back to just the funnel/status display - pipeline controls (trigger
+ * buttons) live on CVE Explorer instead, alongside the CVE list they
+ * populate.
+ */
 export function PipelineHealthView() {
   const [state, setState] = useState({ loading: true, health: null, error: null });
 
@@ -26,8 +31,8 @@ export function PipelineHealthView() {
     <div className="pipeline-health-view">
       <h1>Pipeline Health</h1>
       <p className="view-subtitle">
-        How many CVEs are sitting at each stage of the pipeline right now - useful for spotting
-        where a backlog is building up.
+        How many CVEs are sitting at each stage right now - useful for spotting where a backlog
+        is building up, independent of whether anything has reached CVE Explorer yet.
       </p>
 
       {state.loading && <div className="pipeline-health-view__loading">Loading…</div>}
@@ -37,7 +42,7 @@ export function PipelineHealthView() {
 
       {state.health && (
         <div className="pipeline-health-view__stages">
-          <StageCard title="1. Ingestion" total={state.health.ingestion.total}>
+          <StageCard title="1. Ingestion">
             <StatRow label="Total CVEs" value={state.health.ingestion.total} />
           </StageCard>
 

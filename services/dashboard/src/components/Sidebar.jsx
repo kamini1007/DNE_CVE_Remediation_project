@@ -1,7 +1,7 @@
 const NAV_ITEMS = [
   { key: 'cves', label: 'CVE Explorer' },
-  { key: 'learning', label: 'Continuous Learning' },
   { key: 'scanner-findings', label: 'Scanner Findings' },
+  { key: 'learning', label: 'Continuous Learning' },
   { key: 'pipeline-health', label: 'Pipeline Health' },
 ];
 

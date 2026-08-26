@@ -1,0 +1,4 @@
+.stats-grid--compact {
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 600px;
+}

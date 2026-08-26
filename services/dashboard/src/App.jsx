@@ -6,17 +6,16 @@ import { ScannerFindingsView } from './views/ScannerFindingsView';
 import { PipelineHealthView } from './views/PipelineHealthView';
 
 export function App() {
-  const [view, setView] = useState('cves');
-  const [selectedCveId, setSelectedCveId] = useState(null);
+  const [view, setView] = useState('scanner-findings');
 
   return (
     <div className="app-shell">
       <Sidebar activeView={view} onNavigate={setView} />
 
       <main className="app-main">
-        {view === 'cves' && <CveExplorerView onSelectCve={setSelectedCveId} selectedCveId={selectedCveId} />}
-        {view === 'learning' && <LearningView />}
+        {view === 'cves' && <CveExplorerView />}
         {view === 'scanner-findings' && <ScannerFindingsView />}
+        {view === 'learning' && <LearningView />}
         {view === 'pipeline-health' && <PipelineHealthView />}
       </main>
     </div>
