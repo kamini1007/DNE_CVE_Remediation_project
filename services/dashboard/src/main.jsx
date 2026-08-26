@@ -25,6 +25,7 @@ import './styles/scanner-findings-severity.css';
 import './styles/scanner-findings-batch-polish.css';
 import './styles/push-scan-pr.css';
 import './styles/force-push.css';
+import './styles/scanner-stats.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

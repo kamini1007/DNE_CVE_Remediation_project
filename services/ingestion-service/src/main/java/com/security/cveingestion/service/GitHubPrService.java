@@ -30,20 +30,23 @@ import java.util.regex.Pattern;
  * Two ways to use this:
  * - createFixPr(): one finding, one PR.
  * - createBatchFixPr(): many findings selected at once, ONE PR containing
- *   all of them, grouped by ScannerFinding.target. Before including a
- *   finding, checks fix_pr history for a prior PR covering the same
- *   CVE+package+repo - if one exists AND is still open on GitHub (not
- *   merged/closed), the finding is skipped with a note pointing at the
- *   existing PR instead of opening a duplicate. If the status check itself
- *   fails for some reason, this fails OPEN (doesn't block) rather than
- *   silently preventing a legitimate new PR.
+ *   all of them, grouped by ScannerFinding.target. Checks fix_pr history
+ *   for a prior still-open PR before including a finding, to avoid
+ *   duplicates.
  *
- * Both accept an OPTIONAL newBranchName - if blank/null, an auto-generated
- * name is used instead.
+ * ORPHANED BRANCH CLEANUP: both flows create a branch, then commit to it,
+ * then open a PR from it - three separate GitHub API calls, any of which
+ * can fail independently. If the commit or PR-open step fails AFTER the
+ * branch was successfully created, that branch is deleted automatically
+ * before the error is surfaced, rather than left dangling on GitHub with
+ * nothing pointing at it (which would also permanently block any retry
+ * using that same branch name, since GitHub refuses to create a branch
+ * ref that already exists). Cleanup itself is best-effort - if deleting
+ * the branch also fails, that's logged as a separate warning, but the
+ * original failure is still what gets surfaced to the caller, not masked
+ * by a cleanup problem.
  *
- * ERROR HANDLING: every GitHub API call goes through callGitHub()/
- * callGitHubVoid(), which translate GitHub's raw HTTP error codes into
- * clear, actionable messages.
+ * Both flows accept an OPTIONAL newBranchName.
  *
  * SECURITY - read before changing this file:
  * - The GitHub token is read from an environment variable only
@@ -123,24 +126,31 @@ public class GitHubPrService {
         callGitHubVoid("creating branch '" + newBranchName + "'",
                 () -> createBranch(owner, repo, newBranchName, baseSha));
 
-        String commitMessage = "Fix " + finding.getCveId() + ": bump " + finding.getPackageName()
-                + " to " + finding.getFixedVersion();
-        callGitHubVoid("committing the updated " + manifestPath + " to '" + newBranchName + "'",
-                () -> updateFile(owner, repo, manifestPath, commitMessage, updatedText, original.getSha(), newBranchName));
+        // Branch now exists on GitHub - everything from here on gets
+        // cleaned up (branch deleted) if it fails, rather than left orphaned.
+        try {
+            String commitMessage = "Fix " + finding.getCveId() + ": bump " + finding.getPackageName()
+                    + " to " + finding.getFixedVersion();
+            callGitHubVoid("committing the updated " + manifestPath + " to '" + newBranchName + "'",
+                    () -> updateFile(owner, repo, manifestPath, commitMessage, updatedText, original.getSha(), newBranchName));
 
-        String explanation = buildExplanation(finding, manifestPath);
-        GitHubPullRequest pr = callGitHub("opening the pull request",
-                () -> createPullRequest(owner, repo, newBranchName, branch, commitMessage, explanation));
+            String explanation = buildExplanation(finding, manifestPath);
+            GitHubPullRequest pr = callGitHub("opening the pull request",
+                    () -> createPullRequest(owner, repo, newBranchName, branch, commitMessage, explanation));
 
-        log.info("Opened PR #{} ({}) for {} in {}/{}", pr.getNumber(), pr.getHtmlUrl(), finding.getCveId(), owner, repo);
+            log.info("Opened PR #{} ({}) for {} in {}/{}", pr.getNumber(), pr.getHtmlUrl(), finding.getCveId(), owner, repo);
 
-        saveFixPrRecordAt(finding.getId(), finding.getCveId(), finding.getPackageName(), finding.getInstalledVersion(),
-                finding.getFixedVersion(), owner, repo, newBranchName, pr, explanation, OffsetDateTime.now());
+            saveFixPrRecordAt(finding.getId(), finding.getCveId(), finding.getPackageName(), finding.getInstalledVersion(),
+                    finding.getFixedVersion(), owner, repo, newBranchName, pr, explanation, OffsetDateTime.now());
 
-        return new CreateFixPrResult(
-                pr.getHtmlUrl(), pr.getNumber(), newBranchName, manifestPath,
-                finding.getPackageName(), finding.getInstalledVersion(), finding.getFixedVersion(),
-                finding.getCveId(), explanation);
+            return new CreateFixPrResult(
+                    pr.getHtmlUrl(), pr.getNumber(), newBranchName, manifestPath,
+                    finding.getPackageName(), finding.getInstalledVersion(), finding.getFixedVersion(),
+                    finding.getCveId(), explanation);
+        } catch (RuntimeException e) {
+            cleanupOrphanedBranch(owner, repo, newBranchName);
+            throw e;
+        }
     }
 
     // ============================================================
@@ -192,57 +202,63 @@ public class GitHubPrService {
         callGitHubVoid("creating branch '" + newBranchName + "'",
                 () -> createBranch(owner, repo, newBranchName, baseSha));
 
-        List<BatchFixItem> included = new ArrayList<>();
+        // Branch now exists - clean it up automatically if anything below fails.
+        try {
+            List<BatchFixItem> included = new ArrayList<>();
 
-        for (Map.Entry<String, List<ScannerFinding>> entry : byFile.entrySet()) {
-            String manifestPath = entry.getKey();
-            List<ScannerFinding> fileFindings = entry.getValue();
+            for (Map.Entry<String, List<ScannerFinding>> entry : byFile.entrySet()) {
+                String manifestPath = entry.getKey();
+                List<ScannerFinding> fileFindings = entry.getValue();
 
-            GitHubFileContent original = callGitHub(
-                    "fetching " + manifestPath + " from " + owner + "/" + repo,
-                    () -> getFileContent(owner, repo, manifestPath, branch));
-            String originalContent = new String(Base64.getMimeDecoder().decode(original.getContent()), StandardCharsets.UTF_8);
-            String content = originalContent;
+                GitHubFileContent original = callGitHub(
+                        "fetching " + manifestPath + " from " + owner + "/" + repo,
+                        () -> getFileContent(owner, repo, manifestPath, branch));
+                String originalContent = new String(Base64.getMimeDecoder().decode(original.getContent()), StandardCharsets.UTF_8);
+                String content = originalContent;
 
-            for (ScannerFinding f : fileFindings) {
-                String updated = bumpVersion(content, manifestPath, f.getPackageName(), f.getFixedVersion());
-                if (updated.equals(content)) {
-                    skipped.add(f.getCveId() + " (" + f.getPackageName() + "): couldn't find it at the expected version in " + manifestPath);
-                    continue;
+                for (ScannerFinding f : fileFindings) {
+                    String updated = bumpVersion(content, manifestPath, f.getPackageName(), f.getFixedVersion());
+                    if (updated.equals(content)) {
+                        skipped.add(f.getCveId() + " (" + f.getPackageName() + "): couldn't find it at the expected version in " + manifestPath);
+                        continue;
+                    }
+                    content = updated;
+                    included.add(new BatchFixItem(f.getId(), f.getCveId(), f.getPackageName(),
+                            f.getInstalledVersion(), f.getFixedVersion(), manifestPath));
                 }
-                content = updated;
-                included.add(new BatchFixItem(f.getId(), f.getCveId(), f.getPackageName(),
-                        f.getInstalledVersion(), f.getFixedVersion(), manifestPath));
+
+                if (!content.equals(originalContent)) {
+                    String commitMessage = "Fix " + fileFindings.size() + " "
+                            + (fileFindings.size() == 1 ? "vulnerability" : "vulnerabilities") + " in " + manifestPath;
+                    String finalContent = content;
+                    callGitHubVoid("committing the updated " + manifestPath + " to '" + newBranchName + "'",
+                            () -> updateFile(owner, repo, manifestPath, commitMessage, finalContent, original.getSha(), newBranchName));
+                }
             }
 
-            if (!content.equals(originalContent)) {
-                String commitMessage = "Fix " + fileFindings.size() + " "
-                        + (fileFindings.size() == 1 ? "vulnerability" : "vulnerabilities") + " in " + manifestPath;
-                String finalContent = content;
-                callGitHubVoid("committing the updated " + manifestPath + " to '" + newBranchName + "'",
-                        () -> updateFile(owner, repo, manifestPath, commitMessage, finalContent, original.getSha(), newBranchName));
+            if (included.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "None of the selected findings could actually be applied - " + String.join("; ", skipped));
             }
+
+            String title = "Fix " + included.size() + " " + (included.size() == 1 ? "vulnerability" : "vulnerabilities") + " (batch)";
+            String body = buildBatchExplanation(included, skipped);
+            GitHubPullRequest pr = callGitHub("opening the pull request",
+                    () -> createPullRequest(owner, repo, newBranchName, branch, title, body));
+
+            log.info("Opened batch PR #{} ({}) with {} fix(es) in {}/{}", pr.getNumber(), pr.getHtmlUrl(), included.size(), owner, repo);
+
+            OffsetDateTime now = OffsetDateTime.now();
+            for (BatchFixItem item : included) {
+                saveFixPrRecordAt(item.findingId(), item.cveId(), item.packageName(), item.oldVersion(),
+                        item.newVersion(), owner, repo, newBranchName, pr, body, now);
+            }
+
+            return new BatchCreateFixPrResult(pr.getHtmlUrl(), pr.getNumber(), newBranchName, included, skipped);
+        } catch (RuntimeException e) {
+            cleanupOrphanedBranch(owner, repo, newBranchName);
+            throw e;
         }
-
-        if (included.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "None of the selected findings could actually be applied - " + String.join("; ", skipped));
-        }
-
-        String title = "Fix " + included.size() + " " + (included.size() == 1 ? "vulnerability" : "vulnerabilities") + " (batch)";
-        String body = buildBatchExplanation(included, skipped);
-        GitHubPullRequest pr = callGitHub("opening the pull request",
-                () -> createPullRequest(owner, repo, newBranchName, branch, title, body));
-
-        log.info("Opened batch PR #{} ({}) with {} fix(es) in {}/{}", pr.getNumber(), pr.getHtmlUrl(), included.size(), owner, repo);
-
-        OffsetDateTime now = OffsetDateTime.now();
-        for (BatchFixItem item : included) {
-            saveFixPrRecordAt(item.findingId(), item.cveId(), item.packageName(), item.oldVersion(),
-                    item.newVersion(), owner, repo, newBranchName, pr, body, now);
-        }
-
-        return new BatchCreateFixPrResult(pr.getHtmlUrl(), pr.getNumber(), newBranchName, included, skipped);
     }
 
     private String buildBatchExplanation(List<BatchFixItem> included, List<String> skipped) {
@@ -265,17 +281,23 @@ public class GitHubPrService {
         return sb.toString();
     }
 
+    /** Deletes a branch that was created but never ended up with a PR - best-effort, logs rather than throws if cleanup itself fails. */
+    private void cleanupOrphanedBranch(String owner, String repo, String branchName) {
+        try {
+            restTemplate.exchange(
+                    GITHUB_API + "/repos/" + owner + "/" + repo + "/git/refs/heads/" + branchName,
+                    HttpMethod.DELETE, new HttpEntity<>(authHeaders()), Void.class);
+            log.info("[github-pr] cleaned up orphaned branch '{}' in {}/{} after a failure", branchName, owner, repo);
+        } catch (Exception cleanupError) {
+            log.warn("[github-pr] failed to clean up orphaned branch '{}' in {}/{} - you may need to delete it manually on GitHub: {}",
+                    branchName, owner, repo, cleanupError.getMessage());
+        }
+    }
+
     // ============================================================
     // Duplicate-PR check
     // ============================================================
 
-    /**
-     * If a prior PR was recorded for this exact CVE+package+repo AND it's
-     * still open on GitHub (not merged/closed), returns its URL. Fails
-     * OPEN (returns empty, doesn't block) if the status check itself
-     * errors - a lookup problem shouldn't silently prevent a legitimate
-     * new PR.
-     */
     private Optional<String> findExistingOpenPr(String cveId, String packageName, String owner, String repo) {
         Optional<FixPr> prior = fixPrRepository
                 .findFirstByCveIdAndPackageNameAndOwnerAndRepoOrderByCreatedAtDesc(cveId, packageName, owner, repo);
@@ -349,22 +371,27 @@ public class GitHubPrService {
 
     private String bumpVersion(String content, String manifestPath, String packageName, String fixedVersion) {
         String lowerPath = manifestPath.toLowerCase();
-        String escapedPkg = Pattern.quote(packageName);
         String safeVersion = Matcher.quoteReplacement(fixedVersion);
 
         if (lowerPath.endsWith("package.json")) {
+            String escapedPkg = Pattern.quote(packageName);
             Pattern p = Pattern.compile("(\"" + escapedPkg + "\"\\s*:\\s*\")[^\"]+(\")");
             Matcher m = p.matcher(content);
             return m.find() ? m.replaceFirst("$1" + safeVersion + "$2") : content;
         }
         if (lowerPath.endsWith("requirements.txt")) {
+            String escapedPkg = Pattern.quote(packageName);
             Pattern p = Pattern.compile("(?m)^(" + escapedPkg + "\\s*==?\\s*)[^\\s]+");
             Matcher m = p.matcher(content);
             return m.find() ? m.replaceFirst("$1" + safeVersion) : content;
         }
         if (lowerPath.endsWith("pom.xml")) {
+            String artifactIdOnly = packageName.contains(":")
+                    ? packageName.substring(packageName.lastIndexOf(':') + 1)
+                    : packageName;
+            String escapedArtifactId = Pattern.quote(artifactIdOnly);
             Pattern p = Pattern.compile(
-                    "(<artifactId>" + escapedPkg + "</artifactId>\\s*<version>)[^<]+(</version>)");
+                    "(<artifactId>" + escapedArtifactId + "</artifactId>\\s*<version>)[^<]+(</version>)");
             Matcher m = p.matcher(content);
             return m.find() ? m.replaceFirst("$1" + safeVersion + "$2") : content;
         }

@@ -46,4 +46,24 @@ config.jira.isConfigured = Boolean(
   config.jira.baseUrl && config.jira.email && config.jira.apiToken && config.jira.projectKey
 );
 
+// Loud, unambiguous startup confirmation - this exact "edited .env but
+// forgot to restart" situation has come up repeatedly for this project
+// across multiple services, so this makes it impossible to miss whether
+// this specific restart actually picked up the intended config, without
+// needing to dig through remediation_action rows to find out after the fact.
+if (config.jira.isConfigured) {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[config] Jira IS configured - baseUrl=${config.jira.baseUrl}, email=${config.jira.email}, ` +
+    `projectKey=${config.jira.projectKey}, issueType=${config.jira.issueType}. Real tickets will be created.`
+  );
+} else {
+  const missing = ['baseUrl', 'email', 'apiToken', 'projectKey'].filter((k) => !config.jira[k]);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[config] Jira is NOT configured - missing: ${missing.join(', ')}. ` +
+    'Running in DRY-RUN mode: playbooks will be generated, but no real Jira tickets will be created.'
+  );
+}
+
 module.exports = config;
