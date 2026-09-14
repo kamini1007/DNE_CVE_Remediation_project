@@ -27,7 +27,15 @@ public class RiskController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    /** Prioritized vulnerability list - the primary output of Phase 4, highest risk first. */
+    /**
+     * Prioritized vulnerability list - most recently scored first.
+     * CHANGED: this previously sorted by risk score descending
+     * (findAllByOrderByRiskScoreDesc / findByRiskLevelIgnoreCaseOrderByRiskScoreDesc).
+     * The sort order was hardcoded via the repository method name, not
+     * driven by any Pageable/sort request parameter - that's why an
+     * earlier attempt to fix this by adding a "sort" query param from the
+     * frontend had no effect at all, since this method never read one.
+     */
     @GetMapping
     public Page<RiskScore> listPrioritized(
             @RequestParam(required = false) String level,
@@ -36,9 +44,9 @@ public class RiskController {
 
         PageRequest pageRequest = PageRequest.of(page, Math.min(size, 100));
         if (level != null) {
-            return riskScoreRepository.findByRiskLevelIgnoreCaseOrderByRiskScoreDesc(level, pageRequest);
+            return riskScoreRepository.findByRiskLevelIgnoreCaseOrderByComputedAtDesc(level, pageRequest);
         }
-        return riskScoreRepository.findAllByOrderByRiskScoreDesc(pageRequest);
+        return riskScoreRepository.findAllByOrderByComputedAtDesc(pageRequest);
     }
 
     @PostMapping("/trigger")

@@ -1,5 +1,10 @@
 const pool = require('../db/pool');
 
+/**
+ * PORTABLE REWRITE: previously used `ON CONFLICT (cve_id) DO UPDATE`, which
+ * H2 doesn't support. Same check-then-insert-or-update pattern as
+ * analysisRepository.js - see that file for the fuller explanation.
+ */
 async function upsertRemediation({
   cveId,
   riskScoreSnapshot,
@@ -10,33 +15,49 @@ async function upsertRemediation({
   status,
   errorMessage = null,
 }) {
-  await pool.query(
-    `
-    INSERT INTO remediation_action (
-      cve_id, risk_score_snapshot, risk_level_snapshot, playbook,
-      jira_ticket_key, jira_ticket_url, status, error_message, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-    ON CONFLICT (cve_id) DO UPDATE SET
-      risk_score_snapshot = EXCLUDED.risk_score_snapshot,
-      risk_level_snapshot = EXCLUDED.risk_level_snapshot,
-      playbook             = EXCLUDED.playbook,
-      jira_ticket_key      = EXCLUDED.jira_ticket_key,
-      jira_ticket_url      = EXCLUDED.jira_ticket_url,
-      status                = EXCLUDED.status,
-      error_message         = EXCLUDED.error_message,
-      updated_at            = now()
-    `,
-    [
-      cveId,
-      riskScoreSnapshot,
-      riskLevelSnapshot,
-      JSON.stringify(playbook),
-      jiraTicketKey,
-      jiraTicketUrl,
-      status,
-      errorMessage,
-    ]
-  );
+  const playbookJson = JSON.stringify(playbook);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: existing } = await client.query('SELECT cve_id FROM remediation_action WHERE cve_id = $1', [cveId]);
+
+    if (existing.length > 0) {
+      await client.query(
+        `
+        UPDATE remediation_action SET
+          risk_score_snapshot = $2,
+          risk_level_snapshot = $3,
+          playbook             = $4,
+          jira_ticket_key      = $5,
+          jira_ticket_url      = $6,
+          status                = $7,
+          error_message         = $8,
+          updated_at            = now()
+        WHERE cve_id = $1
+        `,
+        [cveId, riskScoreSnapshot, riskLevelSnapshot, playbookJson, jiraTicketKey, jiraTicketUrl, status, errorMessage]
+      );
+    } else {
+      await client.query(
+        `
+        INSERT INTO remediation_action (
+          cve_id, risk_score_snapshot, risk_level_snapshot, playbook,
+          jira_ticket_key, jira_ticket_url, status, error_message, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+        `,
+        [cveId, riskScoreSnapshot, riskLevelSnapshot, playbookJson, jiraTicketKey, jiraTicketUrl, status, errorMessage]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function findByCveId(cveId) {
@@ -79,22 +100,36 @@ async function findTicketsAwaitingOutcome(limit) {
  * Records that a ticket was resolved: computes hours-to-resolution against
  * the row's own created_at, and whether that beat the playbook's own
  * dueByHours - the ground truth Phase 8's calibration reports read.
+ *
+ * PORTABLE REWRITE: previously computed this with PostgreSQL-specific
+ * `EXTRACT(EPOCH FROM ...)` date arithmetic and a `::numeric` cast inside
+ * the UPDATE itself. Both are avoided now by fetching created_at first and
+ * doing the hours-to-resolution and met_sla calculation in plain
+ * JavaScript, then writing the already-computed values - portable
+ * regardless of which database is behind pool.query().
  */
 async function markResolved(cveId, resolvedAt, dueByHours) {
+  const { rows } = await pool.query('SELECT created_at FROM remediation_action WHERE cve_id = $1', [cveId]);
+  if (rows.length === 0) {
+    return;
+  }
+
+  const createdAt = new Date(rows[0].created_at);
+  const resolvedDate = new Date(resolvedAt);
+  const hoursToResolution = Math.round(((resolvedDate.getTime() - createdAt.getTime()) / 1000 / 3600) * 100) / 100;
+  const metSla = dueByHours == null ? null : hoursToResolution <= Number(dueByHours);
+
   await pool.query(
     `
     UPDATE remediation_action
     SET resolved_at = $2,
-        time_to_resolution_hours = ROUND(EXTRACT(EPOCH FROM ($2 - created_at)) / 3600.0, 2),
-        met_sla = CASE
-          WHEN $3::numeric IS NULL THEN NULL
-          ELSE (EXTRACT(EPOCH FROM ($2 - created_at)) / 3600.0) <= $3::numeric
-        END,
+        time_to_resolution_hours = $3,
+        met_sla = $4,
         status = 'RESOLVED',
         updated_at = now()
     WHERE cve_id = $1
     `,
-    [cveId, resolvedAt, dueByHours]
+    [cveId, resolvedAt, hoursToResolution, metSla]
   );
 }
 

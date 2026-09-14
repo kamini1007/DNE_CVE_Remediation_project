@@ -90,7 +90,8 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
-        <!-- Spring Boot 4 no longer auto-configures Flyway just because
+
+		<!-- Spring Boot 4 no longer auto-configures Flyway just because
              flyway-core is on the classpath - without this starter,
              migrations silently do not run on startup (no error at all,
              just an empty database). flyway-database-postgresql is still
@@ -104,14 +105,14 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- RSS/Atom parsing for vendor advisory feeds -->
+		<!-- RSS/Atom parsing for vendor advisory feeds -->
         <dependency>
             <groupId>com.rometools</groupId>
             <artifactId>rome</artifactId>
             <version>${rome.version}</version>
         </dependency>
 
-        <!-- Lombok -->
+		<!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -128,7 +129,7 @@
 
     <build>
         <plugins>
-            <!-- Confirmed fix for a known, currently-tracked Spring Boot 4 +
+			<!-- Confirmed fix for a known, currently-tracked Spring Boot 4 +
                  Lombok issue: Maven's implicit classpath-based annotation
                  processor discovery does not reliably pick up Lombok under
                  Boot 4's build setup, so every Lombok-generated getter/

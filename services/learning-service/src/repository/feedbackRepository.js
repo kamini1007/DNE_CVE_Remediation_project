@@ -2,6 +2,14 @@ const pool = require('../db/pool');
 
 const VALID_TYPES = new Set(['ANALYSIS_ACCURACY', 'RISK_ACCURACY', 'REMEDIATION_OUTCOME']);
 
+/**
+ * PORTABLE REWRITE: previously used `RETURNING id, ...` to hand back the
+ * created row - confirmed H2 doesn't support RETURNING at all, even in
+ * PostgreSQL compatibility mode. Fixed by explicitly setting created_at
+ * from JavaScript (rather than leaving it to a database-side default) and
+ * then querying for the generated id using that exact timestamp - both are
+ * standard INSERT/SELECT, portable regardless of database.
+ */
 async function submitFeedback({ cveId, feedbackType, rating, comment, submittedBy }) {
   if (!VALID_TYPES.has(feedbackType)) {
     const err = new Error(`feedbackType must be one of ${[...VALID_TYPES].join(', ')}`);
@@ -14,15 +22,36 @@ async function submitFeedback({ cveId, feedbackType, rating, comment, submittedB
     throw err;
   }
 
+  const createdAt = new Date();
+  const normalizedComment = comment || null;
+  const normalizedSubmittedBy = submittedBy || null;
+
+  await pool.query(
+    `
+    INSERT INTO feedback (cve_id, feedback_type, rating, comment, submitted_by, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    `,
+    [cveId, feedbackType, rating, normalizedComment, normalizedSubmittedBy, createdAt]
+  );
+
   const { rows } = await pool.query(
     `
-    INSERT INTO feedback (cve_id, feedback_type, rating, comment, submitted_by)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, cve_id, feedback_type, rating, comment, submitted_by, created_at
+    SELECT id FROM feedback
+    WHERE cve_id = $1 AND feedback_type = $2 AND created_at = $3
+    ORDER BY id DESC LIMIT 1
     `,
-    [cveId, feedbackType, rating, comment || null, submittedBy || null]
+    [cveId, feedbackType, createdAt]
   );
-  return rows[0];
+
+  return {
+    id: rows[0]?.id ?? null,
+    cve_id: cveId,
+    feedback_type: feedbackType,
+    rating,
+    comment: normalizedComment,
+    submitted_by: normalizedSubmittedBy,
+    created_at: createdAt,
+  };
 }
 
 async function findByCveId(cveId) {
