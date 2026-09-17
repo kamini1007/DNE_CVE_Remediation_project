@@ -1,5 +1,33 @@
 require('dotenv').config();
 
+// ============================================================
+// TEMPORARY DIAGNOSTIC - remove this block once Jira config is confirmed
+// working. Prints exactly what dotenv actually parsed for each Jira
+// variable - length and a safely-truncated preview, never the full
+// token - so hidden whitespace, invisible characters, or genuine absence
+// are all distinguishable from each other, instead of guessing from
+// eyeballing the file.
+// ============================================================
+function describe(name, value) {
+  if (value === undefined) return `${name}: UNDEFINED (not in process.env at all)`;
+  if (value === '') return `${name}: EMPTY STRING (present but blank)`;
+  const preview = value.length > 6 ? `${value.slice(0, 3)}...${value.slice(-3)}` : '(too short to preview safely)';
+  return `${name}: length=${value.length}, preview="${preview}"`;
+}
+// eslint-disable-next-line no-console
+console.log('[diagnostic] cwd =', process.cwd());
+// eslint-disable-next-line no-console
+console.log('[diagnostic] ' + describe('JIRA_BASE_URL', process.env.JIRA_BASE_URL));
+// eslint-disable-next-line no-console
+console.log('[diagnostic] ' + describe('JIRA_EMAIL', process.env.JIRA_EMAIL));
+// eslint-disable-next-line no-console
+console.log('[diagnostic] ' + describe('JIRA_API_TOKEN', process.env.JIRA_API_TOKEN));
+// eslint-disable-next-line no-console
+console.log('[diagnostic] ' + describe('JIRA_PROJECT_KEY', process.env.JIRA_PROJECT_KEY));
+// ============================================================
+// END TEMPORARY DIAGNOSTIC
+// ============================================================
+
 const config = {
   port: parseInt(process.env.PORT || '3001', 10),
 
@@ -16,7 +44,7 @@ const config = {
     email: process.env.JIRA_EMAIL || null,
     apiToken: process.env.JIRA_API_TOKEN || null,
     projectKey: process.env.JIRA_PROJECT_KEY || null,
-    issueType: process.env.JIRA_ISSUE_TYPE || 'Task',
+    issueType: process.env.JIRA_ISSUE_TYPE || null,
   },
 
   remediation: {
@@ -46,11 +74,6 @@ config.jira.isConfigured = Boolean(
   config.jira.baseUrl && config.jira.email && config.jira.apiToken && config.jira.projectKey
 );
 
-// Loud, unambiguous startup confirmation - this exact "edited .env but
-// forgot to restart" situation has come up repeatedly for this project
-// across multiple services, so this makes it impossible to miss whether
-// this specific restart actually picked up the intended config, without
-// needing to dig through remediation_action rows to find out after the fact.
 if (config.jira.isConfigured) {
   // eslint-disable-next-line no-console
   console.log(

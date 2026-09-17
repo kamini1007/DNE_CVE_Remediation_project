@@ -25,7 +25,7 @@ public class PushScanAndPrController {
         try {
             boolean forcePush = Boolean.TRUE.equals(request.forcePush());
             PushScanAndPrResult result = pushScanAndPrService.run(
-                    request.localPath(), request.projectName(), request.owner(), request.repo(),
+                    request.source(), request.projectName(), request.owner(), request.repo(),
                     request.baseBranch(), request.newBranchName(), forcePush);
             return ResponseEntity.ok(result);
         } catch (IllegalStateException | IllegalArgumentException e) {

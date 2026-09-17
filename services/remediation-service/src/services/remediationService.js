@@ -6,6 +6,28 @@ const { createTicket } = require('./jiraClient');
 const { remediationTotal, batchDuration, batchSize: batchSizeGauge } = require('../metrics/metrics');
 
 /**
+ * Extracts the real underlying reason from a failed fetch() call.
+ * Node's fetch throws a generic "fetch failed" TypeError for ANY
+ * network-level problem (DNS failure, connection refused, TLS/certificate
+ * error, proxy rejection) - the actual cause is nested one level deeper in
+ * `error.cause`, which was previously being dropped entirely (only
+ * `error.message` - just the generic string - was ever logged or stored).
+ * This pulls out `.code` (e.g. ENOTFOUND, ECONNREFUSED, CERT_HAS_EXPIRED)
+ * and `.message` from the cause when present, falling back to the
+ * top-level message alone for errors that aren't network-related at all
+ * (e.g. Jira returning a real HTTP error status, which already has a
+ * specific, useful message from jiraClient.js with no cause to unwrap).
+ */
+function describeError(err) {
+  if (err.cause) {
+    const code = err.cause.code ? `${err.cause.code}: ` : '';
+    const causeMessage = err.cause.message || String(err.cause);
+    return `${err.message} (${code}${causeMessage})`;
+  }
+  return err.message;
+}
+
+/**
  * Builds a playbook (and, if Jira is configured, a ticket) for one already-fetched
  * scored CVE. Never throws - failures are recorded as a FAILED row so a bad
  * CVE doesn't stop the rest of a batch, and gets retried on the next run.
@@ -32,18 +54,19 @@ async function remediateOne(scoredCve) {
     remediationTotal.inc({ status });
     return { cveId, status };
   } catch (err) {
+    const detail = describeError(err);
     // eslint-disable-next-line no-console
-    console.error(`[remediation] failed for ${cveId}: ${err.message}`);
+    console.error(`[remediation] failed for ${cveId}: ${detail}`);
     await remediationRepository.upsertRemediation({
       cveId,
       riskScoreSnapshot: scoredCve.risk_score,
       riskLevelSnapshot: scoredCve.risk_level,
       playbook: { summary: 'Playbook generation or ticket creation failed', urgency: scoredCve.risk_level, dueByHours: null, steps: [] },
       status: 'FAILED',
-      errorMessage: err.message?.slice(0, 2000),
+      errorMessage: detail.slice(0, 2000),
     });
     remediationTotal.inc({ status: 'FAILED' });
-    return { cveId, status: 'FAILED', error: err.message };
+    return { cveId, status: 'FAILED', error: detail };
   }
 }
 

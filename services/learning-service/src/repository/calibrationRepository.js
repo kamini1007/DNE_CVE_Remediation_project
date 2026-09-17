@@ -8,13 +8,18 @@ const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
  * separate queries rather than one join, since feedback and remediation
  * outcomes are independent signals with different sample sizes - joining
  * them would silently drop rows wherever one side is missing.
+ *
+ * PORTABLE REWRITE: `::int` and `::numeric` are PostgreSQL's shorthand cast
+ * syntax - replaced with standard CAST(... AS type), which works
+ * identically on every database rather than relying on shorthand that
+ * isn't confirmed to work the same way everywhere.
  */
 async function getRiskLevelStats() {
   const { rows: feedbackRows } = await pool.query(
     `
     SELECT r.risk_level,
-           COUNT(*)::int AS feedback_count,
-           ROUND(AVG(f.rating)::numeric, 2) AS avg_rating
+           CAST(COUNT(*) AS INTEGER) AS feedback_count,
+           ROUND(CAST(AVG(f.rating) AS NUMERIC), 2) AS avg_rating
     FROM feedback f
     JOIN risk_score r ON r.cve_id = f.cve_id
     WHERE f.feedback_type = 'RISK_ACCURACY'
@@ -25,8 +30,8 @@ async function getRiskLevelStats() {
   const { rows: outcomeRows } = await pool.query(
     `
     SELECT risk_level_snapshot AS risk_level,
-           COUNT(*)::int AS resolved_count,
-           ROUND(AVG(met_sla::int)::numeric, 2) AS sla_met_rate
+           CAST(COUNT(*) AS INTEGER) AS resolved_count,
+           ROUND(CAST(AVG(CAST(met_sla AS INTEGER)) AS NUMERIC), 2) AS sla_met_rate
     FROM remediation_action
     WHERE resolved_at IS NOT NULL AND met_sla IS NOT NULL
     GROUP BY risk_level_snapshot
@@ -50,8 +55,8 @@ async function getPromptVersionStats() {
   const { rows } = await pool.query(
     `
     SELECT a.prompt_version,
-           COUNT(*)::int AS feedback_count,
-           ROUND(AVG(f.rating)::numeric, 2) AS avg_rating
+           CAST(COUNT(*) AS INTEGER) AS feedback_count,
+           ROUND(CAST(AVG(f.rating) AS NUMERIC), 2) AS avg_rating
     FROM feedback f
     JOIN cve_analysis a ON a.cve_id = f.cve_id
     WHERE f.feedback_type = 'ANALYSIS_ACCURACY' AND a.prompt_version IS NOT NULL
@@ -67,16 +72,41 @@ async function getPromptVersionStats() {
   }));
 }
 
+/**
+ * PORTABLE REWRITE: previously used `RETURNING id, generated_at, ...` -
+ * not supported by H2. Same explicit-timestamp-then-lookup pattern as
+ * feedbackRepository.submitFeedback().
+ */
 async function saveReport({ riskLevelStats, promptVersionStats, recommendations }) {
+  const generatedAt = new Date();
+  const riskLevelStatsJson = JSON.stringify(riskLevelStats);
+  const promptVersionStatsJson = JSON.stringify(promptVersionStats);
+  const recommendationsJson = JSON.stringify(recommendations);
+
+  await pool.query(
+    `
+    INSERT INTO calibration_report (risk_level_stats, prompt_version_stats, recommendations, generated_at)
+    VALUES ($1, $2, $3, $4)
+    `,
+    [riskLevelStatsJson, promptVersionStatsJson, recommendationsJson, generatedAt]
+  );
+
   const { rows } = await pool.query(
     `
-    INSERT INTO calibration_report (risk_level_stats, prompt_version_stats, recommendations)
-    VALUES ($1, $2, $3)
-    RETURNING id, generated_at, risk_level_stats, prompt_version_stats, recommendations
+    SELECT id FROM calibration_report
+    WHERE generated_at = $1
+    ORDER BY id DESC LIMIT 1
     `,
-    [JSON.stringify(riskLevelStats), JSON.stringify(promptVersionStats), JSON.stringify(recommendations)]
+    [generatedAt]
   );
-  return rows[0];
+
+  return {
+    id: rows[0]?.id ?? null,
+    generated_at: generatedAt,
+    risk_level_stats: riskLevelStats,
+    prompt_version_stats: promptVersionStats,
+    recommendations,
+  };
 }
 
 async function getLatestReport() {

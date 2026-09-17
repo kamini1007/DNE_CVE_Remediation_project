@@ -1,0 +1,6 @@
+.scanner-findings-view__detected-repo {
+  align-self: flex-end;
+  padding-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}

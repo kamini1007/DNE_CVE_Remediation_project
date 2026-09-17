@@ -93,10 +93,10 @@ curl http://localhost:4010/health            # mock-bedrock
 ```bash
 curl -X POST http://localhost:8080/api/ingestion/trigger/NVD
 curl -X POST http://localhost:3000/api/analysis/trigger
-curl -X POST "http://localhost:8081/api/risk/trigger?batchSize=50"
+curl -X POST "http://localhost:8083/api/risk/trigger?batchSize=50"
 curl http://localhost:3000/api/analysis/cve/CVE-2024-12345   # use a real ID from step 1's logs
-curl http://localhost:8081/api/risk/CVE-2024-12345
-curl http://localhost:8081/api/risk                          # prioritized list, highest risk first
+curl http://localhost:8083/api/risk/CVE-2024-12345
+curl http://localhost:8083/api/risk                          # prioritized list, highest risk first
 ```
 Every field in the analysis response is prefixed `[mock-bedrock]` -
 intentional, so mock output can never be mistaken for a real assessment.

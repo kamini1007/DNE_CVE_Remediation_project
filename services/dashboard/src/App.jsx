@@ -6,7 +6,7 @@ import { ScannerFindingsView } from './views/ScannerFindingsView';
 import { PipelineHealthView } from './views/PipelineHealthView';
 
 export function App() {
-  const [view, setView] = useState('scanner-findings');
+  const [view, setView] = useState('cves');
 
   return (
     <div className="app-shell">

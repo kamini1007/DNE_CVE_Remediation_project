@@ -23,38 +23,32 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Turns scanner findings (which already have packageName + installedVersion
- * + fixedVersion from Trivy) into real GitHub pull requests bumping those
+ * Turns scanner findings into real GitHub pull requests bumping vulnerable
  * dependencies to their fixed versions.
  *
- * Two ways to use this:
  * - createFixPr(): one finding, one PR.
- * - createBatchFixPr(): many findings selected at once, ONE PR containing
- *   all of them, grouped by ScannerFinding.target. Checks fix_pr history
- *   for a prior still-open PR before including a finding, to avoid
- *   duplicates.
+ * - createBatchFixPr(): many findings, ONE PR, grouped by
+ *   ScannerFinding.target. Accepts an OPTIONAL Jira ticket reference
+ *   (key + url) - when present, it's woven into the branch name, PR
+ *   title, and PR body.
  *
- * ORPHANED BRANCH CLEANUP: both flows create a branch, then commit to it,
- * then open a PR from it - three separate GitHub API calls, any of which
- * can fail independently. If the commit or PR-open step fails AFTER the
- * branch was successfully created, that branch is deleted automatically
- * before the error is surfaced, rather than left dangling on GitHub with
- * nothing pointing at it (which would also permanently block any retry
- * using that same branch name, since GitHub refuses to create a branch
- * ref that already exists). Cleanup itself is best-effort - if deleting
- * the branch also fails, that's logged as a separate warning, but the
- * original failure is still what gets surfaced to the caller, not masked
- * by a cleanup problem.
+ * VERSION CONSOLIDATION: when multiple CVEs affect the SAME package within
+ * the same file (common - e.g. log4j-core often has several CVEs, each
+ * with its own suggested fix version), findings are grouped by package
+ * and bumped ONCE to the highest version among them, rather than bumped
+ * once per CVE. Bumping sequentially per-CVE would silently overwrite
+ * each earlier bump - the file would only ever reflect whichever CVE was
+ * processed last, while the recorded history claimed each CVE's own
+ * (different, no-longer-true) target version was actually applied.
  *
- * Both flows accept an OPTIONAL newBranchName.
+ * Checks fix_pr history for a prior still-open PR before including a
+ * finding, to avoid duplicates.
  *
- * SECURITY - read before changing this file:
- * - The GitHub token is read from an environment variable only
- *   (GITHUB_TOKEN), never accepted as a request parameter, never returned
- *   in any response, never logged.
- * - This makes real commits and opens a real, visible PR - never touches
- *   the base branch directly, only a new branch created for this fix.
- * - Only ever called for an explicit, person-selected set of findings.
+ * ORPHANED BRANCH CLEANUP: if the commit or PR-open step fails after the
+ * branch was created, that branch is deleted automatically.
+ *
+ * SECURITY: the GitHub token is read from an environment variable only,
+ * never accepted as a request parameter, never logged, never returned.
  */
 @Service
 @Slf4j
@@ -126,8 +120,6 @@ public class GitHubPrService {
         callGitHubVoid("creating branch '" + newBranchName + "'",
                 () -> createBranch(owner, repo, newBranchName, baseSha));
 
-        // Branch now exists on GitHub - everything from here on gets
-        // cleaned up (branch deleted) if it fails, rather than left orphaned.
         try {
             String commitMessage = "Fix " + finding.getCveId() + ": bump " + finding.getPackageName()
                     + " to " + finding.getFixedVersion();
@@ -141,7 +133,7 @@ public class GitHubPrService {
             log.info("Opened PR #{} ({}) for {} in {}/{}", pr.getNumber(), pr.getHtmlUrl(), finding.getCveId(), owner, repo);
 
             saveFixPrRecordAt(finding.getId(), finding.getCveId(), finding.getPackageName(), finding.getInstalledVersion(),
-                    finding.getFixedVersion(), owner, repo, newBranchName, pr, explanation, OffsetDateTime.now());
+                    finding.getFixedVersion(), owner, repo, newBranchName, pr, explanation, OffsetDateTime.now(), null, null);
 
             return new CreateFixPrResult(
                     pr.getHtmlUrl(), pr.getNumber(), newBranchName, manifestPath,
@@ -159,6 +151,19 @@ public class GitHubPrService {
 
     public BatchCreateFixPrResult createBatchFixPr(List<Long> findingIds, String owner, String repo,
                                                      String baseBranch, String requestedBranchName) {
+        return createBatchFixPr(findingIds, owner, repo, baseBranch, requestedBranchName, null, null);
+    }
+
+    /**
+     * @param jiraTicketKey optional (e.g. "SCRUM-123") - when present, woven
+     *                      into the branch name (if requestedBranchName is
+     *                      blank), the PR title, and the PR body.
+     * @param jiraTicketUrl optional - included as a link in the PR body if
+     *                      jiraTicketKey is also present.
+     */
+    public BatchCreateFixPrResult createBatchFixPr(List<Long> findingIds, String owner, String repo,
+                                                     String baseBranch, String requestedBranchName,
+                                                     String jiraTicketKey, String jiraTicketUrl) {
         requireToken();
 
         if (findingIds == null || findingIds.isEmpty()) {
@@ -194,7 +199,9 @@ public class GitHubPrService {
                     "None of the selected findings could be included - " + String.join("; ", skipped));
         }
 
-        String autoName = "fix/batch-" + System.currentTimeMillis();
+        String autoName = (jiraTicketKey != null && !jiraTicketKey.isBlank())
+                ? "fix/" + sanitizeForBranchName(jiraTicketKey)
+                : "fix/batch-" + System.currentTimeMillis();
         String newBranchName = resolveBranchName(requestedBranchName, autoName);
 
         String baseSha = callGitHub("looking up base branch '" + branch + "' in " + owner + "/" + repo,
@@ -202,7 +209,6 @@ public class GitHubPrService {
         callGitHubVoid("creating branch '" + newBranchName + "'",
                 () -> createBranch(owner, repo, newBranchName, baseSha));
 
-        // Branch now exists - clean it up automatically if anything below fails.
         try {
             List<BatchFixItem> included = new ArrayList<>();
 
@@ -216,20 +222,43 @@ public class GitHubPrService {
                 String originalContent = new String(Base64.getMimeDecoder().decode(original.getContent()), StandardCharsets.UTF_8);
                 String content = originalContent;
 
+                // Group by package WITHIN this file - several CVEs can share
+                // one package, each suggesting a different fix version. Bump
+                // once per package, to the single highest version among them,
+                // not once per CVE (which would silently overwrite itself).
+                Map<String, List<ScannerFinding>> byPackage = new LinkedHashMap<>();
                 for (ScannerFinding f : fileFindings) {
-                    String updated = bumpVersion(content, manifestPath, f.getPackageName(), f.getFixedVersion());
+                    byPackage.computeIfAbsent(f.getPackageName(), k -> new ArrayList<>()).add(f);
+                }
+
+                for (Map.Entry<String, List<ScannerFinding>> pkgEntry : byPackage.entrySet()) {
+                    List<ScannerFinding> pkgFindings = pkgEntry.getValue();
+                    String resolvedVersion = pkgFindings.stream()
+                            .map(ScannerFinding::getFixedVersion)
+                            .max(this::compareVersions)
+                            .orElseThrow();
+
+                    String updated = bumpVersion(content, manifestPath, pkgEntry.getKey(), resolvedVersion);
                     if (updated.equals(content)) {
-                        skipped.add(f.getCveId() + " (" + f.getPackageName() + "): couldn't find it at the expected version in " + manifestPath);
+                        for (ScannerFinding f : pkgFindings) {
+                            skipped.add(f.getCveId() + " (" + f.getPackageName() + "): couldn't find it at the expected version in " + manifestPath);
+                        }
                         continue;
                     }
                     content = updated;
-                    included.add(new BatchFixItem(f.getId(), f.getCveId(), f.getPackageName(),
-                            f.getInstalledVersion(), f.getFixedVersion(), manifestPath));
+
+                    // Every CVE covered by this package gets the SAME resolved
+                    // version recorded - that's genuinely what ends up in the
+                    // file, regardless of which lower version any individual
+                    // CVE originally suggested.
+                    for (ScannerFinding f : pkgFindings) {
+                        included.add(new BatchFixItem(f.getId(), f.getCveId(), f.getPackageName(),
+                                f.getInstalledVersion(), resolvedVersion, manifestPath));
+                    }
                 }
 
                 if (!content.equals(originalContent)) {
-                    String commitMessage = "Fix " + fileFindings.size() + " "
-                            + (fileFindings.size() == 1 ? "vulnerability" : "vulnerabilities") + " in " + manifestPath;
+                    String commitMessage = buildCommitMessage(fileFindings.size(), manifestPath, jiraTicketKey);
                     String finalContent = content;
                     callGitHubVoid("committing the updated " + manifestPath + " to '" + newBranchName + "'",
                             () -> updateFile(owner, repo, manifestPath, commitMessage, finalContent, original.getSha(), newBranchName));
@@ -241,17 +270,18 @@ public class GitHubPrService {
                         "None of the selected findings could actually be applied - " + String.join("; ", skipped));
             }
 
-            String title = "Fix " + included.size() + " " + (included.size() == 1 ? "vulnerability" : "vulnerabilities") + " (batch)";
-            String body = buildBatchExplanation(included, skipped);
+            String title = buildPrTitle(included.size(), jiraTicketKey);
+            String body = buildBatchExplanation(included, skipped, jiraTicketKey, jiraTicketUrl);
             GitHubPullRequest pr = callGitHub("opening the pull request",
                     () -> createPullRequest(owner, repo, newBranchName, branch, title, body));
 
-            log.info("Opened batch PR #{} ({}) with {} fix(es) in {}/{}", pr.getNumber(), pr.getHtmlUrl(), included.size(), owner, repo);
+            log.info("Opened batch PR #{} ({}) with {} fix(es) in {}/{}{}", pr.getNumber(), pr.getHtmlUrl(), included.size(), owner, repo,
+                    jiraTicketKey != null ? " (linked to " + jiraTicketKey + ")" : "");
 
             OffsetDateTime now = OffsetDateTime.now();
             for (BatchFixItem item : included) {
                 saveFixPrRecordAt(item.findingId(), item.cveId(), item.packageName(), item.oldVersion(),
-                        item.newVersion(), owner, repo, newBranchName, pr, body, now);
+                        item.newVersion(), owner, repo, newBranchName, pr, body, now, jiraTicketKey, jiraTicketUrl);
             }
 
             return new BatchCreateFixPrResult(pr.getHtmlUrl(), pr.getNumber(), newBranchName, included, skipped);
@@ -261,8 +291,61 @@ public class GitHubPrService {
         }
     }
 
-    private String buildBatchExplanation(List<BatchFixItem> included, List<String> skipped) {
+    /**
+     * Compares two version strings numerically component-by-component
+     * (e.g. "2.17.1" > "2.3.2" even though "2" < "3" as plain text) -
+     * general-purpose, not tied to any specific ecosystem's version
+     * scheme, since findings span npm/pip/Maven packages with different
+     * conventions. Falls back to 0 for any non-numeric leading part of a
+     * component (handles suffixes like "1.0.0-beta" reasonably, though
+     * exact pre-release ordering isn't attempted - not needed here, since
+     * Trivy's own fixedVersion values are release versions, not pre-releases).
+     */
+    private int compareVersions(String v1, String v2) {
+        String[] parts1 = v1.split("\\.");
+        String[] parts2 = v2.split("\\.");
+        int maxLen = Math.max(parts1.length, parts2.length);
+        for (int i = 0; i < maxLen; i++) {
+            long p1 = i < parts1.length ? leadingDigits(parts1[i]) : 0;
+            long p2 = i < parts2.length ? leadingDigits(parts2[i]) : 0;
+            if (p1 != p2) {
+                return Long.compare(p1, p2);
+            }
+        }
+        return 0;
+    }
+
+    private long leadingDigits(String s) {
+        StringBuilder digits = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            if (Character.isDigit(c)) {
+                digits.append(c);
+            } else {
+                break;
+            }
+        }
+        return digits.isEmpty() ? 0 : Long.parseLong(digits.toString());
+    }
+
+    private String buildCommitMessage(int count, String manifestPath, String jiraTicketKey) {
+        String base = "Fix " + count + " " + (count == 1 ? "vulnerability" : "vulnerabilities") + " in " + manifestPath;
+        return (jiraTicketKey != null && !jiraTicketKey.isBlank()) ? base + " (" + jiraTicketKey + ")" : base;
+    }
+
+    private String buildPrTitle(int count, String jiraTicketKey) {
+        String base = "Fix " + count + " " + (count == 1 ? "vulnerability" : "vulnerabilities") + " (batch)";
+        return (jiraTicketKey != null && !jiraTicketKey.isBlank()) ? "[" + jiraTicketKey + "] " + base : base;
+    }
+
+    private String buildBatchExplanation(List<BatchFixItem> included, List<String> skipped, String jiraTicketKey, String jiraTicketUrl) {
         StringBuilder sb = new StringBuilder();
+        if (jiraTicketKey != null && !jiraTicketKey.isBlank()) {
+            sb.append("Jira: ").append(jiraTicketKey);
+            if (jiraTicketUrl != null && !jiraTicketUrl.isBlank()) {
+                sb.append(" (").append(jiraTicketUrl).append(")");
+            }
+            sb.append("\n\n");
+        }
         sb.append("This PR bumps ").append(included.size()).append(" ")
                 .append(included.size() == 1 ? "dependency" : "dependencies")
                 .append(" to their fixed versions, as reported by Trivy:\n\n");
@@ -281,17 +364,20 @@ public class GitHubPrService {
         return sb.toString();
     }
 
-    /** Deletes a branch that was created but never ended up with a PR - best-effort, logs rather than throws if cleanup itself fails. */
-    private void cleanupOrphanedBranch(String owner, String repo, String branchName) {
-        try {
-            restTemplate.exchange(
-                    GITHUB_API + "/repos/" + owner + "/" + repo + "/git/refs/heads/" + branchName,
-                    HttpMethod.DELETE, new HttpEntity<>(authHeaders()), Void.class);
-            log.info("[github-pr] cleaned up orphaned branch '{}' in {}/{} after a failure", branchName, owner, repo);
-        } catch (Exception cleanupError) {
-            log.warn("[github-pr] failed to clean up orphaned branch '{}' in {}/{} - you may need to delete it manually on GitHub: {}",
-                    branchName, owner, repo, cleanupError.getMessage());
-        }
+    // ============================================================
+    // Branch listing - for the dashboard's base-branch dropdown
+    // ============================================================
+
+    /** Lists real branch names for a repo, most-recently-relevant first (GitHub's own default ordering). */
+    public List<String> listBranches(String owner, String repo) {
+        requireToken();
+        List<Map<String, Object>> branches = callGitHub(
+                "listing branches for " + owner + "/" + repo,
+                () -> restTemplate.exchange(
+                        GITHUB_API + "/repos/" + owner + "/" + repo + "/branches?per_page=100",
+                        HttpMethod.GET, new HttpEntity<>(authHeaders()), List.class
+                ).getBody());
+        return branches.stream().map(b -> (String) b.get("name")).toList();
     }
 
     // ============================================================
@@ -337,8 +423,22 @@ public class GitHubPrService {
         return sanitized.isEmpty() ? autoGenerated : sanitized;
     }
 
+    /** Deletes a branch that was created but never ended up with a PR - best-effort. */
+    private void cleanupOrphanedBranch(String owner, String repo, String branchName) {
+        try {
+            restTemplate.exchange(
+                    GITHUB_API + "/repos/" + owner + "/" + repo + "/git/refs/heads/" + branchName,
+                    HttpMethod.DELETE, new HttpEntity<>(authHeaders()), Void.class);
+            log.info("[github-pr] cleaned up orphaned branch '{}' in {}/{} after a failure", branchName, owner, repo);
+        } catch (Exception cleanupError) {
+            log.warn("[github-pr] failed to clean up orphaned branch '{}' in {}/{} - you may need to delete it manually on GitHub: {}",
+                    branchName, owner, repo, cleanupError.getMessage());
+        }
+    }
+
     private void saveFixPrRecordAt(Long findingId, String cveId, String packageName, String oldVersion, String newVersion,
-                                    String owner, String repo, String branchName, GitHubPullRequest pr, String explanation, OffsetDateTime createdAt) {
+                                    String owner, String repo, String branchName, GitHubPullRequest pr, String explanation,
+                                    OffsetDateTime createdAt, String jiraTicketKey, String jiraTicketUrl) {
         FixPr record = new FixPr();
         record.setScannerFindingId(findingId);
         record.setCveId(cveId);
@@ -352,6 +452,8 @@ public class GitHubPrService {
         record.setPrNumber(pr.getNumber());
         record.setExplanation(explanation);
         record.setCreatedAt(createdAt);
+        record.setJiraTicketKey(jiraTicketKey);
+        record.setJiraTicketUrl(jiraTicketUrl);
         try {
             fixPrRepository.save(record);
         } catch (Exception e) {

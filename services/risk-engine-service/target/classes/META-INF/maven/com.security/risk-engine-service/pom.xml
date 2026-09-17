@@ -73,7 +73,7 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- No Flyway dependency here on purpose - the schema (including
+		<!-- No Flyway dependency here on purpose - the schema (including
              asset_profile and risk_score) is owned by ingestion-service's
              Flyway migrations. This service only reads/writes existing tables. -->
 
@@ -93,7 +93,7 @@
 
     <build>
         <plugins>
-            <!-- Confirmed fix for a known, currently-tracked Spring Boot 4 +
+			<!-- Confirmed fix for a known, currently-tracked Spring Boot 4 +
                  Lombok issue: Maven's implicit classpath-based annotation
                  processor discovery does not reliably pick up Lombok under
                  Boot 4's build setup, so every Lombok-generated getter/

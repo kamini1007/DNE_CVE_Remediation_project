@@ -64,12 +64,6 @@ function useApiOnce(fetchFn, deps) {
   return state;
 }
 
-/**
- * Risk-level stats, pipeline controls, and the CVE listing, together - no
- * scan/PR/Jira actions here (those are Scanner Findings), and Pipeline
- * Health keeps its own read-only status funnel separate from these
- * action buttons.
- */
 export function CveExplorerView() {
   const [level, setLevel] = useState('ALL');
   const [page, setPage] = useState(0);
@@ -82,8 +76,16 @@ export function CveExplorerView() {
   const highQuery = useApiOnce(() => riskApi.listPrioritized({ level: 'HIGH', size: 1 }), [refreshKey]);
   const mediumQuery = useApiOnce(() => riskApi.listPrioritized({ level: 'MEDIUM', size: 1 }), [refreshKey]);
 
+  // sort=computedAt,desc - most-recently-scored CVEs first, instead of the
+  // previous highest-risk-first ordering. RECONSTRUCTED ASSUMPTION: this
+  // relies on the backend's /api/risk endpoint already supporting standard
+  // Spring Data Pageable sort binding (very common, since it already
+  // accepts page/size the same way) - not verified against the actual
+  // controller/repository code. If ordering doesn't actually change after
+  // applying this, that confirms the backend needs an explicit code
+  // change instead, and I'll need the real file to do that correctly.
   const cveQuery = useApiOnce(
-    () => riskApi.listPrioritized({ ...(level === 'ALL' ? {} : { level }), page, size: PAGE_SIZE }),
+    () => riskApi.listPrioritized({ ...(level === 'ALL' ? {} : { level }), page, size: PAGE_SIZE, sort: 'computedAt,desc' }),
     [level, page, refreshKey]
   );
   const cveRows = (cveQuery.data?.content || []).map((r) => ({
@@ -155,7 +157,7 @@ export function CveExplorerView() {
   return (
     <div className="scanner-findings-view">
       <h1>CVE Explorer</h1>
-      <p className="view-subtitle">Every risk-scored CVE, highest risk first. Select one to see its full pipeline record.</p>
+      <p className="view-subtitle">Every risk-scored CVE, most recently scored first. Select one to see its full pipeline record.</p>
 
       <div className="stats-grid">
         <StatCard label="Critical" value={criticalQuery.data?.totalElements ?? '—'} sublabel="Risk-scored CVEs" tone="critical" />
