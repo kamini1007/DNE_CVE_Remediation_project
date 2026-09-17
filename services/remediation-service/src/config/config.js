@@ -44,7 +44,7 @@ const config = {
     email: process.env.JIRA_EMAIL || null,
     apiToken: process.env.JIRA_API_TOKEN || null,
     projectKey: process.env.JIRA_PROJECT_KEY || null,
-    issueType: process.env.JIRA_ISSUE_TYPE || 'Task',
+    issueType: process.env.JIRA_ISSUE_TYPE || null,
   },
 
   remediation: {

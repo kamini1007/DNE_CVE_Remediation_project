@@ -47,6 +47,26 @@ REM echo All prerequisites found.
 
 echo.
 echo ==================================================
+echo        GitHub Token Configuration
+echo ==================================================
+
+if defined GITHUB_TOKEN (
+    echo GITHUB_TOKEN is already configured.
+) else (
+    set /p "GITHUB_TOKEN=Enter GitHub Personal Access Token: "
+)
+
+if not defined GITHUB_TOKEN (
+    echo.
+    echo ERROR: GITHUB_TOKEN is not configured.
+    echo Stopping deployment.
+    exit /b 1
+)
+
+echo GitHub token configured for this deployment.
+
+echo.
+echo ==================================================
 echo        Starting CVE Remediation Platform
 echo ==================================================
 
@@ -77,7 +97,17 @@ start "ingestion-service" cmd /k "cd /d ""%ROOT%services\ingestion-service"" && 
 
 echo.
 echo ==================================================
-echo  [3/6] Compiling risk-engine-service (Maven)
+echo  [3/6] Compiling mock bedrock  and running
+echo ==================================================
+pushd "%ROOT%infra\localstack\mock-bedrock"
+echo Starting mock bedrock in separate CMD window...
+start "mock-bedrock" cmd /k "cd /d ""%ROOT%infra\localstack\mock-bedrock"" && call npm.cmd start"
+popd
+echo Mock bedrock started OK.
+
+echo.
+echo ==================================================
+echo  [4/6] Compiling risk-engine-service (Maven)
 echo ==================================================
 pushd "%ROOT%services\risk-engine-service"
 
@@ -100,7 +130,7 @@ start "risk-engine-service" cmd /k "cd /d ""%ROOT%services\risk-engine-service""
 
 echo.
 echo ==================================================
-echo  [4/6] Installing Node services
+echo  [5/6] Installing Node services
 echo       ai-analysis, remediation, learning
 echo ==================================================
 
@@ -134,14 +164,14 @@ for %%S in (ai-analysis-service remediation-service learning-service) do (
     echo %%S installed OK.
 
     echo Starting %%S in separate CMD window...
-
+    set "NODE_TLS_REJECT_UNAUTHORIZED=0"
     start "%%S" cmd /k "cd /d ""%ROOT%services\%%S"" && call npm.cmd start"
 )
 
 
 echo.
 echo ==================================================
-echo  [5/6] Installing and building dashboard
+echo  [6/6] Installing and building dashboard
 echo       (Vite/React)
 echo ==================================================
 

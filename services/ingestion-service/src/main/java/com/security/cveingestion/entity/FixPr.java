@@ -51,4 +51,12 @@ public class FixPr {
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    // Null if this PR has no linked Jira ticket - either it predates this
+    // column, or Jira wasn't configured when it was created.
+    @Column(name = "jira_ticket_key")
+    private String jiraTicketKey;
+
+    @Column(name = "jira_ticket_url")
+    private String jiraTicketUrl;
 }

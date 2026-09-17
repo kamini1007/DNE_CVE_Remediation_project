@@ -81,6 +81,25 @@ async function list({ status, page = 0, size = 20 }) {
   return rows;
 }
 
+/**
+ * NEW: total count matching the same filter list() uses, minus
+ * page/size/ordering - this is what was missing for the dashboard's stat
+ * cards, which request size=1 (to keep the payload light) but need the
+ * REAL total separately, not just how many rows came back in that
+ * one-row page.
+ */
+async function count({ status }) {
+  const params = [];
+  let where = '';
+  if (status) {
+    params.push(status);
+    where = `WHERE status = $${params.length}`;
+  }
+
+  const { rows } = await pool.query(`SELECT COUNT(*) AS count FROM remediation_action ${where}`, params);
+  return parseInt(rows[0].count, 10);
+}
+
 /** Tickets that were created and haven't been marked resolved yet - candidates for outcome polling. */
 async function findTicketsAwaitingOutcome(limit) {
   const { rows } = await pool.query(
@@ -133,4 +152,4 @@ async function markResolved(cveId, resolvedAt, dueByHours) {
   );
 }
 
-module.exports = { upsertRemediation, findByCveId, list, findTicketsAwaitingOutcome, markResolved };
+module.exports = { upsertRemediation, findByCveId, list, count, findTicketsAwaitingOutcome, markResolved };
