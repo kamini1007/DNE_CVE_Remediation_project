@@ -37,7 +37,14 @@ async function remediateOne(scoredCve) {
 
   try {
     const playbook = buildPlaybook(scoredCve);
-    const ticket = await createTicket(cveId, playbook);
+    // Respects config.remediation.autoCreateTickets (default false) - see
+    // config.js for the full explanation. When false, this always behaves
+    // as dry-run regardless of whether Jira itself is configured, so the
+    // general scheduled population never creates real tickets on its own;
+    // only ingestion-service's scan-triggered flow does that now.
+    const ticket = config.remediation.autoCreateTickets
+      ? await createTicket(cveId, playbook)
+      : { dryRun: true, ticketKey: null, ticketUrl: null };
 
     const status = ticket.dryRun ? 'PLAYBOOK_GENERATED' : 'TICKET_CREATED';
 

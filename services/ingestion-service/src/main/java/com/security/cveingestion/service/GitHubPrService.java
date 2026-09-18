@@ -13,7 +13,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -475,6 +477,9 @@ public class GitHubPrService {
         String lowerPath = manifestPath.toLowerCase();
         String safeVersion = Matcher.quoteReplacement(fixedVersion);
 
+        if (lowerPath.endsWith("package-lock.json")) {
+            return bumpPackageLockVersion(content, packageName, fixedVersion);
+        }
         if (lowerPath.endsWith("package.json")) {
             String escapedPkg = Pattern.quote(packageName);
             Pattern p = Pattern.compile("(\"" + escapedPkg + "\"\\s*:\\s*\")[^\"]+(\")");
@@ -499,7 +504,66 @@ public class GitHubPrService {
         }
 
         throw new IllegalArgumentException(
-                "Unsupported manifest type: " + manifestPath + " - supported: package.json, requirements.txt, pom.xml");
+                "Unsupported manifest type: " + manifestPath + " - supported: package.json, package-lock.json, requirements.txt, pom.xml");
+    }
+
+    /**
+     * package-lock.json has a nested JSON structure, not the simple flat
+     * map package.json has - a regex substitution here would be fragile
+     * and risk corrupting the file, so this parses it as real JSON and
+     * edits the matching node's "version" field directly, using the
+     * JsonMapper already injected into this class for GitHub API calls.
+     *
+     * Handles both lockfile formats currently in use: npm 7+
+     * (lockfileVersion 2/3, a flat "packages" map keyed by paths like
+     * "node_modules/<pkg>") and the older npm 5/6 format (lockfileVersion
+     * 1, a nested "dependencies" map). Both are checked and updated if
+     * present, since some lockfiles retain both for backward compatibility.
+     *
+     * HONEST TRADEOFF: re-serializes the whole file rather than doing a
+     * targeted text edit, so the resulting PR diff may show whitespace/
+     * formatting differences beyond just the touched version line - the
+     * value itself is correct, but the diff isn't as minimal as the other
+     * manifest types' regex-based edits.
+     */
+    private String bumpPackageLockVersion(String content, String packageName, String fixedVersion) {
+        try {
+            JsonNode root = objectMapper.readTree(content);
+            boolean changed = false;
+
+            JsonNode packages = root.get("packages");
+            if (packages != null && packages.isObject()) {
+                Iterator<Map.Entry<String, JsonNode>> fields = packages.properties().iterator();
+                while (fields.hasNext()) {
+                    Map.Entry<String, JsonNode> entry = fields.next();
+                    String path = entry.getKey();
+                    if (path.equals("node_modules/" + packageName) || path.endsWith("/node_modules/" + packageName)) {
+                        JsonNode pkgNode = entry.getValue();
+                        if (pkgNode.isObject() && pkgNode.has("version")) {
+                            ((ObjectNode) pkgNode).put("version", fixedVersion);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            JsonNode dependencies = root.get("dependencies");
+            if (dependencies != null && dependencies.isObject() && dependencies.has(packageName)) {
+                JsonNode pkgNode = dependencies.get(packageName);
+                if (pkgNode.isObject() && pkgNode.has("version")) {
+                    ((ObjectNode) pkgNode).put("version", fixedVersion);
+                    changed = true;
+                }
+            }
+
+            if (!changed) {
+                return content;
+            }
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("[github-pr] failed to parse/edit package-lock.json for {}: {}", packageName, e.getMessage());
+            return content;
+        }
     }
 
     private String sanitizeForBranchName(String value) {

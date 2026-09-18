@@ -1,33 +1,5 @@
 require('dotenv').config();
 
-// ============================================================
-// TEMPORARY DIAGNOSTIC - remove this block once Jira config is confirmed
-// working. Prints exactly what dotenv actually parsed for each Jira
-// variable - length and a safely-truncated preview, never the full
-// token - so hidden whitespace, invisible characters, or genuine absence
-// are all distinguishable from each other, instead of guessing from
-// eyeballing the file.
-// ============================================================
-function describe(name, value) {
-  if (value === undefined) return `${name}: UNDEFINED (not in process.env at all)`;
-  if (value === '') return `${name}: EMPTY STRING (present but blank)`;
-  const preview = value.length > 6 ? `${value.slice(0, 3)}...${value.slice(-3)}` : '(too short to preview safely)';
-  return `${name}: length=${value.length}, preview="${preview}"`;
-}
-// eslint-disable-next-line no-console
-console.log('[diagnostic] cwd =', process.cwd());
-// eslint-disable-next-line no-console
-console.log('[diagnostic] ' + describe('JIRA_BASE_URL', process.env.JIRA_BASE_URL));
-// eslint-disable-next-line no-console
-console.log('[diagnostic] ' + describe('JIRA_EMAIL', process.env.JIRA_EMAIL));
-// eslint-disable-next-line no-console
-console.log('[diagnostic] ' + describe('JIRA_API_TOKEN', process.env.JIRA_API_TOKEN));
-// eslint-disable-next-line no-console
-console.log('[diagnostic] ' + describe('JIRA_PROJECT_KEY', process.env.JIRA_PROJECT_KEY));
-// ============================================================
-// END TEMPORARY DIAGNOSTIC
-// ============================================================
-
 const config = {
   port: parseInt(process.env.PORT || '3001', 10),
 
@@ -44,7 +16,7 @@ const config = {
     email: process.env.JIRA_EMAIL || null,
     apiToken: process.env.JIRA_API_TOKEN || null,
     projectKey: process.env.JIRA_PROJECT_KEY || null,
-    issueType: process.env.JIRA_ISSUE_TYPE || null,
+    issueType: process.env.JIRA_ISSUE_TYPE || 'Task',
   },
 
   remediation: {
@@ -53,6 +25,19 @@ const config = {
     // Only risk levels at or above this get a remediation action - LOW/MEDIUM
     // CVEs aren't worth a Jira ticket by default in most vuln management programs.
     minRiskLevel: process.env.REMEDIATION_MIN_RISK_LEVEL || 'HIGH',
+    // CHANGED: defaults to false now. This scheduled job runs against the
+    // GENERAL risk-scored CVE population (anything from NVD/MITRE/vendor
+    // ingestion, completely unrelated to project scanning) - previously it
+    // created a real Jira ticket for every HIGH/CRITICAL CVE it found here,
+    // which meant new tickets kept appearing just from routine daily
+    // ingestion, with no scan involved at all. Now it still generates and
+    // stores a playbook (so "Playbooks Ready" and the remediation_action
+    // history stay meaningful), but never creates a real ticket unless this
+    // is explicitly set to true. Real tickets now only ever come from
+    // ingestion-service's scan-triggered JiraTicketService (one ticket per
+    // scan), which is unaffected by this flag entirely - that's a separate
+    // service with its own, always-on ticket creation.
+    autoCreateTickets: process.env.REMEDIATION_AUTO_CREATE_TICKETS === 'true',
   },
 
   outcomeTracking: {
@@ -78,15 +63,19 @@ if (config.jira.isConfigured) {
   // eslint-disable-next-line no-console
   console.log(
     `[config] Jira IS configured - baseUrl=${config.jira.baseUrl}, email=${config.jira.email}, ` +
-    `projectKey=${config.jira.projectKey}, issueType=${config.jira.issueType}. Real tickets will be created.`
+    `projectKey=${config.jira.projectKey}, issueType=${config.jira.issueType}.`
   );
 } else {
   const missing = ['baseUrl', 'email', 'apiToken', 'projectKey'].filter((k) => !config.jira[k]);
   // eslint-disable-next-line no-console
-  console.log(
-    `[config] Jira is NOT configured - missing: ${missing.join(', ')}. ` +
-    'Running in DRY-RUN mode: playbooks will be generated, but no real Jira tickets will be created.'
-  );
+  console.log(`[config] Jira is NOT configured - missing: ${missing.join(', ')}.`);
 }
+
+// eslint-disable-next-line no-console
+console.log(
+  config.remediation.autoCreateTickets
+    ? '[config] REMEDIATION_AUTO_CREATE_TICKETS=true - this service\'s own scheduled job WILL create real Jira tickets for the general risk-scored CVE population.'
+    : '[config] REMEDIATION_AUTO_CREATE_TICKETS is not set to true - this service\'s scheduled job will only generate playbooks (dry-run), never a real ticket. Real tickets now only come from ingestion-service\'s scan-triggered flow.'
+);
 
 module.exports = config;
